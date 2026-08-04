@@ -1,0 +1,18 @@
+torch
+transformers
+pillow
+azure-ai-documentintelligence
+deepgram-sdk
+google-cloud-translate
+google-cloud-texttospeech
+google-genai>=0.1.0
+langgraph>=0.2.0
+python-dotenv>=1.0.0
+requests>=2.31.0
+# pip install -r requirements.txt
+# .\venv\Scripts\Activate.ps1
+
+# git pull
+# git add .
+# git commit -m "describe what changed"
+# git push
