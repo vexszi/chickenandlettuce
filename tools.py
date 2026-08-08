@@ -1,11 +1,13 @@
 import os
-import time
-import base64
 import requests
 from datetime import datetime, timezone
 from dotenv import load_dotenv
 from state import HospitalState
 
+from google.cloud import translate_v2 as translate
+from google.cloud import texttospeech
+from azure.ai.documentintelligence import DocumentIntelligenceClient
+from azure.core.credentials import AzureKeyCredential
 load_dotenv()
 
 NOVA3_KEY = os.getenv("nova3_key")
@@ -13,43 +15,73 @@ AZURE_KEY1 = os.getenv("azure_key1")
 AZURE_ENDPOINT = os.getenv("azure_endpoint")
 GOOGLE_CLOUD_KEY = os.getenv("cloud_key")
 
-AUDIO_OUTPUT_DIR = "audio_output"
+translate_client = translate.Client()
+tts_client = texttospeech.TextToSpeechClient()
+azure_client = DocumentIntelligenceClient(
+    endpoint=AZURE_ENDPOINT,
+    credential=AzureKeyCredential(AZURE_KEY1),
+)
+
+# ---------------------------------------------------------------------------
+# 1a. Translate INCOMING text to English (normalizes whatever language
+#     the patient just used, and captures what that language was).
+#     Runs INSIDE the graph, every turn. Audio is transcribed
+#     and user-edited on the FRONTEND.
+# ---------------------------------------------------------------------------
+def translate_incoming_tool(state: HospitalState) -> dict:
+    updates = {}
+
+    message_text = state["messages"][-1].content if state.get("messages") else None
+    if message_text:
+        result = translate_client.translate(message_text, target_language="en")
+        updates["translated_text"] = result["translatedText"]
+        updates["detected_language"] = result["detectedSourceLanguage"]
+
+    doc_list = state.get("ocr_text", [])
+    already_translated = state.get("translated_doc_count", 0)
+
+    if len(doc_list) > already_translated:
+        new_doc = doc_list[-1]
+        result = translate_client.translate(new_doc, target_language="en")
+        updates["translated_document_text"] = result["translatedText"]
+        updates.setdefault("detected_language", result["detectedSourceLanguage"])
+        updates["translated_doc_count"] = len(doc_list)
+
+    return updates
 
 
 # ---------------------------------------------------------------------------
-# 1. Translation (Google Cloud Translation)
-#    Input: state["masked_text"] (falls back to transcribed_text if empty)
-#    Output: state["translated_text"]
+# 1b. Translate OUTGOING response back into whatever language was
+#     detected this turn (falls back to preferred_language on turn 1,
+#     skips the API call entirely if it's already English).
+#     Runs INSIDE the graph, every turn.
 # ---------------------------------------------------------------------------
-def translation_tool(state: HospitalState) -> dict:
-    text = state.get("masked_text") or state.get("transcribed_text") or ""
-    target_lang = state.get("preferred_language", "en")
+def translate_outgoing_tool(state: HospitalState) -> dict:
 
-    url = "https://translation.googleapis.com/language/translate/v2"
-    params = {"key": GOOGLE_CLOUD_KEY}
-    payload = {"q": text, "target": target_lang, "format": "text"}
+    target_lang = state.get("detected_language") or state.get("preferred_language", "en")
 
-    resp = requests.post(url, params=params, json=payload, timeout=15)
-    resp.raise_for_status()
+    if target_lang == "en":
+        return {}  # already English, skip the API call
 
-    translated = resp.json()["data"]["translations"][0]["translatedText"]
-    return {"translated_text": translated}
+    text = state.get("output_text", "")
+    if not text:
+        return {}
+
+    result = translate_client.translate(text, target_language=target_lang)
+
+    return {"output_text": result["translatedText"]}
 
 
 # ---------------------------------------------------------------------------
 # 2. Transcription (Deepgram Nova 3)
-#    Input: state["audio_file_path"]
-#    Output: state["transcribed_text"]
+#    Runs OUTSIDE the graph now when frontend detecrs audio upload.
+#    DOES NOT UPDATE STATE
 # ---------------------------------------------------------------------------
-def transcription_tool(state: HospitalState) -> dict:
-    audio_path = state.get("audio_file_path")
-    if not audio_path:
-        return {}
-
+def transcription_tool(audio_path: str, content_type: str = "audio/wav") -> str:
     url = "https://api.deepgram.com/v1/listen"
     headers = {
         "Authorization": f"Token {NOVA3_KEY}",
-        "Content-Type": "audio/wav",  # swap to audio/mpeg, audio/webm, etc. as needed
+        "Content-Type": content_type,
     }
     params = {"model": "nova-3", "smart_format": "true"}
 
@@ -61,87 +93,91 @@ def transcription_tool(state: HospitalState) -> dict:
 
     result = resp.json()
     transcript = result["results"]["channels"][0]["alternatives"][0]["transcript"]
-    return {"transcribed_text": transcript}
+    return transcript
 
 
 # ---------------------------------------------------------------------------
 # 3. OCR (Azure Document Intelligence, prebuilt-read model)
-#    Input: state["document_file_path"]
-#    Output: appends to state["ocr_text"] list (reducer handles the append,
-#    so we just return the single new item wrapped in a list)
+#    Runs OUTSIDE the graph now -- called by a standalone endpoint the
+#    instant a file is uploaded on the frontend.
+#    DOES NOT UPDATE STATE
 # ---------------------------------------------------------------------------
-def ocr_tool(state: HospitalState) -> dict:
-    file_path = state.get("document_file_path")
-    if not file_path:
-        return {}
-
-    analyze_url = (
-        f"{AZURE_ENDPOINT.rstrip('/')}/documentintelligence/documentModels/"
-        f"prebuilt-read:analyze?api-version=2024-11-30"
-    )
-    headers = {
-        "Ocp-Apim-Subscription-Key": AZURE_KEY1,
-        "Content-Type": "application/octet-stream",
-    }
-
+def ocr_tool(file_path: str) -> str:
     with open(file_path, "rb") as f:
-        file_bytes = f.read()
+        poller = azure_client.begin_analyze_document(
+            "prebuilt-read",
+            body=f,
+            content_type="application/octet-stream",
+        )
 
-    resp = requests.post(analyze_url, headers=headers, data=file_bytes, timeout=30)
-    resp.raise_for_status()
-    operation_url = resp.headers["Operation-Location"]
-
-    # Azure Document Intelligence is async -- poll until done
-    poll_headers = {"Ocp-Apim-Subscription-Key": AZURE_KEY1}
-    for _ in range(30):  # ~30s max wait
-        poll_resp = requests.get(operation_url, headers=poll_headers, timeout=15)
-        poll_resp.raise_for_status()
-        result = poll_resp.json()
-
-        if result["status"] == "succeeded":
-            extracted_text = result["analyzeResult"]["content"]
-            return {"ocr_text": [extracted_text]}  # reducer appends this to the list
-        if result["status"] == "failed":
-            raise RuntimeError(f"Azure OCR failed: {result}")
-
-        time.sleep(1)
-
-    raise TimeoutError("Azure OCR polling timed out after 30s")
+    result = poller.result()
+    return result.content
 
 
 # ---------------------------------------------------------------------------
 # 4. Text-to-Speech (Google Cloud TTS)
-#    Input: state["output_text"]
-#    Output: state["output_audio_url"] (local file path to the saved mp3)
+#    Input: state["output_text"], state["detected_language"]
+#    Output: state["output_audio_url"]
+#    Runs OUTSIDE the graph, when triggered by the frontend.
 # ---------------------------------------------------------------------------
+AUDIO_OUTPUT_DIR = "audio_output"
 def tts_tool(state: HospitalState) -> dict:
+
     text = state.get("output_text", "")
     if not text:
         return {}
 
-    lang_code = state.get("preferred_language", "en-US")
-    # Google TTS wants full locale codes like "en-US", not just "en" --
-    # fall back to en-US if you're only storing short codes elsewhere.
-    if len(lang_code) == 2:
-        lang_code = f"{lang_code}-US" if lang_code == "en" else lang_code
-
-    url = f"https://texttospeech.googleapis.com/v1/text:synthesize?key={GOOGLE_CLOUD_KEY}"
-    payload = {
-        "input": {"text": text},
-        "voice": {"languageCode": lang_code, "ssmlGender": "NEUTRAL"},
-        "audioConfig": {"audioEncoding": "MP3"},
+    LANG_CODE_MAP = {
+        "en": "en-US",
+        "es": "es-ES",
+        "fr": "fr-FR",
+        "de": "de-DE",
+        "it": "it-IT",
+        "pt": "pt-BR",
+        "nl": "nl-NL",
+        "da": "da-DK",
+        "sv": "sv-SE",
+        "fi": "fi-FI",
+        "no": "no-NO",
+        "pl": "pl-PL",
+        "cs": "cs-CZ",
+        "ro": "ro-RO",
+        "hu": "hu-HU",
+        "bg": "bg-BG",
+        "el": "el-GR",
+        "uk": "uk-UA",
+        "ru": "ru-RU",
+        "tr": "tr-TR",
+        "id": "id-ID",
+        "vi": "vi-VN",
+        "th": "th-TH",
+        "ja": "ja-JP",
+        "ko": "ko-KR",
+        "zh": "zh-CN",
+        "hi": "hi-IN",
     }
 
-    resp = requests.post(url, json=payload, timeout=15)
-    resp.raise_for_status()
+    lang_code = state.get("detected_language") or state.get("preferred_language", "en")
+    lang_code = LANG_CODE_MAP.get(lang_code, "en-US")  # fallback to English if unknown
 
-    audio_content_b64 = resp.json()["audioContent"]
+    synthesis_input = texttospeech.SynthesisInput(text=text)
+    voice = texttospeech.VoiceSelectionParams(
+        language_code=lang_code,
+        ssml_gender=texttospeech.SsmlVoiceGender.FEMALE,
+    )
+    audio_config = texttospeech.AudioConfig(
+        audio_encoding=texttospeech.AudioEncoding.MP3
+    )
+
+    response = tts_client.synthesize_speech(
+        input=synthesis_input, voice=voice, audio_config=audio_config
+    )
 
     os.makedirs(AUDIO_OUTPUT_DIR, exist_ok=True)
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%f")
     filename = os.path.join(AUDIO_OUTPUT_DIR, f"response_{timestamp}.mp3")
 
     with open(filename, "wb") as f:
-        f.write(base64.b64decode(audio_content_b64))
+        f.write(response.audio_content)
 
     return {"output_audio_url": filename}
