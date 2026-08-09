@@ -4,8 +4,10 @@ from dotenv import load_dotenv
 
 from state import HospitalState
 from schemas import IntentAndExtraction
-from tools import translate_incoming_tool, translate_outgoing_tool, tts_tool
+from tools import translate_incoming_tool, translate_outgoing_tool
 from pii_masking import pii_masking_node
+from policy import retrieve
+
 
 load_dotenv()
 GEMINI_KEY = os.getenv("flash_key")
@@ -124,6 +126,47 @@ def document_explainer_node(state: HospitalState) -> dict:
 
     return {"output_text": response.text.strip(), "status": "complete"}
 
+
+# ---------------------------------------------------------------------------
+# Hospital policy question node
+# ---------------------------------------------------------------------------
+def hospital_policy(state: HospitalState) -> dict:
+  question = state.get("masked_text", "")
+  chunks = retrieve(question, top_k=3)
+  context = "\n\n---\n\n".join(chunks)
+  prompt = f"""
+    You are a hospital policy assistant.
+    Answer the user's question ONLY using the hospital policy below.
+    If the answer cannot be found in the policy, respond:
+      "I couldn't find that information in our hospital policy."
+
+    Rules:
+    - Use ONLY the retrieved hospital policy.
+    - Do not use outside medical knowledge.
+    - If the answer is partially available, answer only the supported portion.
+    - If the answer isn't in the retrieved policy, explicitly say you couldn't find it.
+    - DO NOT share any information that can be confidential for hospital, patient, or staff information.
+      Reply with "Sorry, I cannot provide that information." if the question is about confidential information.
+    - Never invent hospital policies.
+
+    Hospital Policy: {context}
+
+    Question: {question}
+
+    Answer:
+    """
+
+  response = client.models.generate_content(
+    model="gemini-flash-latest",
+    contents=prompt,
+)
+  return {
+     "output_text": response.text.strip(),
+     "retrieved_chunks": chunks,
+     "status": "complete"
+ }
+
+
 # ---------------------------------------------------------------------------
 # Catch-all for messages that don't fit a real intent. NOT the same 
 # as guardrail_triggered, this is for harmless off-flow stuff, 
@@ -148,3 +191,32 @@ def other_intent_node(state: HospitalState) -> dict:
 # ---------------------------------------------------------------------------
 def final_response_node(state: HospitalState) -> dict:
     return translate_outgoing_tool(state)
+
+# ----------------------------------------------------------------------------
+# Book Appointment
+# Calls: save_appointment and book.py
+# ----------------------------------------------------------------------------
+def book_appointment(state: HospitalState) -> dict:
+    # Placeholder for booking logic
+    return {"status": "complete", "output_text": "Appointment booked successfully."}
+
+
+
+# ----------------------------------------------------------------------------
+# Cancel Appointment
+# Calls: get_appointments and cancel_appointment
+# ----------------------------------------------------------------------------
+def cancel_appointment(state: HospitalState) -> dict:
+    # Placeholder for cancellation logic
+    return {"status": "complete", "output_text": "Appointment cancelled successfully."}
+
+
+
+# ----------------------------------------------------------------------------
+# Reschedule Appointment
+# Calls: book_appointment and cancel_appointment
+# ----------------------------------------------------------------------------
+def reschedule_appointment(state: HospitalState) -> dict:
+
+    return {"status": "complete", "output_text": "Appointment cancelled successfully."}
+
