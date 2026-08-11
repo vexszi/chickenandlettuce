@@ -3,16 +3,22 @@ import os
 import hashlib
 import secrets
 from typing import Optional
+from cryptography.fernet import Fernet
+
 
 PATIENTS_FILE = "patients.json"
 APPOINTMENTS_FILE = "appointments.json"
 
+fernet = Fernet(os.getenv("fernet_key"))
 
 def _load(filepath: str) -> dict:              #opens the file and loads data from it
     if not os.path.exists(filepath):
         return {}
-    with open(filepath, "r") as f:
-        return json.load(f)
+    with open(filepath, "rb") as f:
+        encrypted = f.read()
+    if not encrypted:
+        return {}
+    return json.loads(fernet.decrypt(encrypted))
 
 
 def _save(filepath: str, data: dict) -> None:  #saves the data to the file in JSON format

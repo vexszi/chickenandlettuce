@@ -1,6 +1,12 @@
+import importlib
+import importlib.util
 import operator
 from typing import TypedDict, Annotated, Literal, Optional
-from langgraph.graph.message import add_messages
+
+if importlib.util.find_spec("langgraph.graph.message") is not None:
+    add_messages = importlib.import_module("langgraph.graph.message").add_messages
+else:
+    add_messages = object()
 
 class PatientInfo(TypedDict, total=False):
     name: str
@@ -60,7 +66,9 @@ class HospitalState(TypedDict):
     old_patient_follow_up: bool
     symptoms: Optional[str]
     department: Optional[str]
-    doctor_preference: Optional[str]
+    candidate_doctors: list[str]
+    requested_doctor_name: Optional[str]   # was doctor_preference -- now ONLY a specifically named doctor request
+    booking_checklist: dict[str, bool]
 
     existing_appointment_id: Optional[str]   #appointment currently being cancelled or rescheduled
     held_appointment_id: Optional[str]     #new slot for rescheduling

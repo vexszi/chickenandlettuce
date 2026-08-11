@@ -25,6 +25,6 @@ class IntentAndExtraction(BaseModel):
     output_text: Optional[str] = None  # only when guardrail_triggered is True
     emergency_detected: bool
     symptoms: Optional[str] = None
-    doctor_preference: Optional[str] = None
+    requested_doctor_name: Optional[str] = None
     patient_info: Optional[PatientInfoExtraction] = None
     emergency_reason: Optional[str] = None

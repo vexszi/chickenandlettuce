@@ -13,6 +13,8 @@ presidio-analyzer>=2.2.0
 spacy>=3.7.0
 sentence-transformers>=3.0.0
 numpy>=1.26.0
+cryptography
+mcp
 
 
 # pip install -r requirements.txt

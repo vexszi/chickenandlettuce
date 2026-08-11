@@ -50,11 +50,9 @@ hospital front desk assistant. Given the patient's message, determine:
 6. symptoms -- if the patient describes a new medical concern, summarize it \
    briefly while combining it with any existing symptom information. \
    Otherwise leave null.
-7. doctor_preference -- any stated preference for doctor gender, specialty, \
-   or name. Otherwise leave null.
-8. emergency_reason -- if emergency_detected is true, briefly state in one \
-   sentence what about the message indicates an emergency. Otherwise leave null.
-9. patient_info -- any personal/insurance details mentioned THIS message \
+7. requested_doctor_name -- any specifically named doctor the patient requests. \
+   Otherwise leave null.
+8. patient_info -- any personal/insurance details mentioned THIS message \
    only. Leave fields null if not mentioned -- do not guess or fill in \
    placeholder values.
 """
@@ -88,15 +86,22 @@ def intent_guardrail_extraction_node(state: HospitalState) -> dict:
     if result.symptoms:
         updates["symptoms"] = result.symptoms
 
-    if result.doctor_preference:
-        updates["doctor_preference"] = result.doctor_preference
+    if result.requested_doctor_name:
+        updates["requested_doctor_name"] = result.requested_doctor_name
 
-    # merge partial patient_info into existing state: unmentioned fields
-    # keep their old value, mentioned fields overwrite
     if result.patient_info:
         existing = state.get("patient_info", {})
         new_fields = result.patient_info.model_dump(exclude_none=True)
-        updates["patient_info"] = {**existing, **new_fields}
+        pii_map = state.get("pii_map", {})
+
+        # if the value Gemini returned is a placeholder we recognize,
+        # swap it back to the real value. otherwise leave it as-is.
+        unmasked_fields = {
+            key: pii_map.get(value, value)
+            for key, value in new_fields.items()
+        }
+
+        updates["patient_info"] = {**existing, **unmasked_fields}
 
     return updates
 
