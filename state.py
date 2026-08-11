@@ -66,7 +66,6 @@ class HospitalState(TypedDict):
     old_patient_follow_up: bool
     symptoms: Optional[str]
     department: Optional[str]
-    candidate_doctors: list[str]
     requested_doctor_name: Optional[str]   # was doctor_preference -- now ONLY a specifically named doctor request
     booking_checklist: dict[str, bool]
 
@@ -76,6 +75,9 @@ class HospitalState(TypedDict):
     available_slots: list[dict]
     selected_slot: Optional[dict]
     confirmed_appointment: Optional[dict]
+
+    wants_to_register: Optional[bool]
+    new_account_password: Optional[str]
 
     # --- output ---
     output_text: str

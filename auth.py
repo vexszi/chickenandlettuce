@@ -21,16 +21,18 @@ def _load(filepath: str) -> dict:              #opens the file and loads data fr
     return json.loads(fernet.decrypt(encrypted))
 
 
-def _save(filepath: str, data: dict) -> None:  #saves the data to the file in JSON format
-    with open(filepath, "w") as f:
-        json.dump(data, f, indent=2)
+def _save(filepath: str, data: dict) -> None:
+    encrypted = fernet.encrypt(json.dumps(data).encode())
+    with open(filepath, "wb") as f:
+        f.write(encrypted)
 
 
-def _hash_password(password: str, salt: str) -> str:   #hashes a password with salt. salt allows multiple people to use same the password
-    return hashlib.sha256((salt + password).encode()).hexdigest()
+def _hash_password(password: str, salt: str) -> str:
+    return hashlib.pbkdf2_hmac(
+        "sha256", password.encode(), salt.encode(), 100_000
+    ).hex()
 
-
-def register_patient(email: str, password: str, name: str) -> str:
+def register_patient(email: str, password: str, name: str, patient_id: Optional[str] = None) -> str:
     """Creates a new patient record. Returns the new patient_id.
     Raises ValueError if the email is already registered."""
     patients = _load(PATIENTS_FILE)
@@ -39,7 +41,8 @@ def register_patient(email: str, password: str, name: str) -> str:
         raise ValueError("An account with this email already exists.")
 
     salt = secrets.token_hex(8)
-    patient_id = f"p_{secrets.token_hex(4)}"
+    if patient_id is None:
+        patient_id = f"p_{secrets.token_hex(4)}"
 
     patients[email] = {
         "patient_id": patient_id,
@@ -125,3 +128,16 @@ def delete_appointment(patient_id: str, appointment_id: str) -> Optional[dict]:
             return deleted
 
     return None
+
+def get_doctor_appointments(doctor_name: str) -> list:
+    """Returns every booked appointment for a given doctor, across all
+    patients. Used to check a doctor's schedule when finding open slots."""
+    appointments = _load(APPOINTMENTS_FILE)
+    doctor_appts = []
+
+    for patient_id, appts in appointments.items():
+        for appt in appts:
+            if appt.get("doctor") == doctor_name:
+                doctor_appts.append(appt)
+
+    return doctor_appts

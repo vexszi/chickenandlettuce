@@ -2,8 +2,7 @@ import os
 import base64
 from email.message import EmailMessage
 
-from mcp.server.mcpserver import MCPServer
-
+from fastmcp import FastMCP
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -12,7 +11,7 @@ from googleapiclient.discovery import build
 
 SCOPES = ["https://www.googleapis.com/auth/gmail.send"]
 
-mcp = MCPServer("Hospital Server")
+mcp = FastMCP("Hospital Server")
 
 
 def get_gmail_service():

@@ -107,6 +107,15 @@ def intent_guardrail_extraction_node(state: HospitalState) -> dict:
 
 
 #----------------------------------------------------------------------------
+# Langgraph helper function, not a node. Routes to the next node 
+# based on the intent extracted.
+# ----------------------------------------------------------------------------
+def route_intent(state: HospitalState) -> str:
+    if state.get("status") == "blocked":
+        return "final_response_node"
+    return state["intent"]
+
+#----------------------------------------------------------------------------
 # Document explainer node
 # ----------------------------------------------------------------------------
 def document_explainer_node(state: HospitalState) -> dict:
