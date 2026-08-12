@@ -1,0 +1,1733 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>cove — AI Hospital Front Desk</title>
+
+<!-- ================================================================
+     FONTS & STYLESHEET
+     Display face: Fraunces (serif for headlines)
+     Body face: Inter (clean readable UI font)
+     Mono face: IBM Plex Mono (for timestamps and systemic data)
+================================================================= -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+<style>
+/* ================================================================
+   1. DESIGN SYSTEM & TOKENS
+   Color scheme based on serene teal navy (cove/harbor theme).
+   Coral accent reserved strictly for emergency state.
+================================================================= */
+:root {
+  --bg:            #F4F8F7;
+  --bg-deep:       #E7EFEE;
+  --ink:           #16323E;
+  --ink-soft:      #52707B;
+  --line:          #CFDEDD;
+  --teal:          #2C6E7F;
+  --teal-deep:     #1E4E5B;
+  --teal-tint:     #DCEAEA;
+  --seaglass:      #6FA98B;
+  --seaglass-tint: #E1EFE6;
+  --sand:          #D8CDB8;
+  --coral:         #D9634F;
+  --coral-deep:    #B94A39;
+  --coral-tint:    #FBE6E2;
+  --white:         #FFFFFF;
+
+  --font-display: 'Fraunces', Georgia, serif;
+  --font-body:    'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono:    'IBM Plex Mono', 'Courier New', monospace;
+
+  --radius-lg: 28px;
+  --radius-md: 18px;
+  --radius-sm: 10px;
+  --shadow-soft: 0 8px 30px rgba(22,50,62,0.08);
+  --shadow-lift: 0 14px 40px rgba(22,50,62,0.14);
+}
+
+/* Base reset */
+*, *::before, *::after { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; padding: 0; }
+body {
+  font-family: var(--font-body);
+  color: var(--ink);
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+}
+button { font-family: inherit; cursor: pointer; }
+input, select, textarea { font-family: inherit; font-size: inherit; }
+h1, h2, h3, p { margin: 0; }
+
+/* Accessibility Focus */
+:focus-visible {
+  outline: 3px solid var(--teal);
+  outline-offset: 2px;
+}
+
+/* Container shell.
+   NOTE: scrollbar-gutter:stable deliberately is NOT set here (or on
+   html/body) — #app itself rarely scrolls (screen-main manages its
+   own internal scrolling instead), so reserving a gutter at this
+   level just leaves a permanent blank strip down the right edge and
+   pulls full-width bars in short of the true edge of the screen.
+   The gutter is reserved only on the specific inner panels that
+   actually scroll and change height (chat-log, the T&C box, the
+   profile panel) — see those rules further down. */
+#app {
+  position: relative;
+  height: 100vh;
+  height: 100dvh;
+  width: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.screen {
+  display: none;
+  min-height: 100vh;
+  width: 100%;
+  animation: tide-in 350ms ease;
+}
+.screen.is-active {
+  display: flex;
+  flex-direction: column;
+}
+
+@keyframes tide-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* ================================================================
+   2. TYPOGRAPHY & COMMON LAYOUT COMPONENTS
+================================================================= */
+.center-column {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 32px 24px;
+  text-align: center;
+}
+.stack { display: flex; flex-direction: column; gap: 14px; width: 100%; max-width: 460px; }
+.eyebrow {
+  font-family: var(--font-mono); font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--teal);
+}
+h1.display { font-family: var(--font-display); font-weight: 600; font-size: clamp(28px, 5vw, 38px); line-height: 1.15; }
+h2.display { font-family: var(--font-display); font-weight: 600; font-size: clamp(22px, 4vw, 28px); line-height: 1.2; }
+p.lede { color: var(--ink-soft); font-size: 15px; line-height: 1.6; max-width: 460px; }
+
+/* Buttons */
+.btn {
+  border: none; border-radius: 999px; padding: 14px 26px;
+  font-weight: 600; font-size: 15px;
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  transition: transform 120ms ease, background 120ms ease, box-shadow 120ms ease;
+}
+.btn:active { transform: scale(0.98); }
+.btn-primary { background: var(--teal); color: var(--white); box-shadow: var(--shadow-soft); }
+.btn-primary:hover { background: var(--teal-deep); }
+.btn-primary:disabled { background: var(--line); color: var(--ink-soft); cursor: not-allowed; transform: none; }
+.btn-ghost { background: transparent; color: var(--teal); border: 1.5px solid var(--line); }
+.btn-ghost:hover { border-color: var(--teal); background: var(--teal-tint); }
+.btn-block { width: 100%; }
+.btn-emergency {
+  background: var(--coral); color: var(--white); box-shadow: 0 6px 18px rgba(217,99,79,0.35);
+}
+.btn-emergency:hover { background: var(--coral-deep); }
+
+/* Form inputs */
+.field { text-align: left; width: 100%; }
+.field label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 6px; color: var(--ink-soft); }
+.field input, .field select {
+  width: 100%; padding: 12px 14px; border-radius: var(--radius-sm);
+  border: 1.5px solid var(--line); background: var(--white);
+  font-size: 15px; color: var(--ink);
+}
+.field input:focus, .field select:focus { border-color: var(--teal); outline: none; }
+
+/* Scrollable T&C Box */
+.tc-scroll-box {
+  width: 100%;
+  max-height: 180px;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+  background: var(--white);
+  border: 1.5px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 14px;
+  text-align: left;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ink-soft);
+  margin-bottom: 12px;
+}
+.tc-scroll-box p + p { margin-top: 8px; }
+.tc-checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-align: left;
+  font-size: 13.5px;
+  font-weight: 500;
+  margin-bottom: 16px;
+  cursor: pointer;
+}
+.tc-checkbox-row input { width: 18px; height: 18px; accent-color: var(--teal); cursor: pointer; }
+
+/* Choice Cards (Multiple Choice Buttons) */
+.choice-card {
+  display: flex; align-items: center; gap: 14px;
+  width: 100%; text-align: left;
+  padding: 14px 18px; border-radius: var(--radius-md);
+  border: 1.5px solid var(--line); background: var(--white);
+  transition: border-color 120ms ease, background 120ms ease;
+  margin-top: 8px;
+}
+.choice-card:hover { border-color: var(--teal); background: var(--teal-tint); }
+.choice-card.is-selected { border-color: var(--teal); background: var(--teal-tint); font-weight: 600; }
+
+/* ================================================================
+   3. MAIN INTERFACE & SIDEBAR LAYOUT
+   The app uses a toggleable sidebar on the main screen.
+================================================================= */
+.main-layout {
+  display: flex;
+  height: 100vh;
+  height: 100dvh;
+  width: 100%;
+  overflow: hidden;
+  position: relative;
+}
+
+/* Sidebar Styles */
+.sidebar {
+  width: 280px;
+  background: var(--white);
+  border-right: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  transition: transform 250ms ease, margin-left 250ms ease, width 250ms ease;
+  z-index: 40;
+  flex-shrink: 0;
+  overflow: hidden;
+}
+.sidebar.is-collapsed {
+  margin-left: -280px;
+}
+/* Widened slightly while showing the profile panel, so read-only
+   values have room to breathe instead of being squeezed. */
+.sidebar.is-profile-mode {
+  width: 320px;
+}
+.sidebar.is-profile-mode.is-collapsed {
+  margin-left: -320px;
+}
+
+.sidebar-header {
+  padding: 20px;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.sidebar-header .brand {
+  display: flex; align-items: center; gap: 10px;
+  font-family: var(--font-display); font-weight: 600; font-size: 20px;
+}
+
+.sidebar-nav {
+  padding: 20px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1;
+  min-height: 0;
+}
+.sidebar-btn {
+  display: flex; align-items: center; gap: 12px;
+  width: 100%; padding: 12px 16px;
+  border-radius: var(--radius-sm); border: none;
+  background: transparent; color: var(--ink-soft);
+  font-size: 14.5px; font-weight: 600; text-align: left;
+  transition: background 120ms ease, color 120ms ease;
+}
+.sidebar-btn:hover { background: var(--bg-deep); color: var(--teal); }
+.sidebar-btn.is-active { background: var(--teal-tint); color: var(--teal-deep); }
+
+/* Sidebar-nav and sidebar-footer are hidden — not removed — while
+   the profile panel is showing, so they snap back exactly as they
+   were the moment "Close profile" is tapped. */
+.sidebar.is-profile-mode .sidebar-nav,
+.sidebar.is-profile-mode .sidebar-footer {
+  display: none;
+}
+
+.sidebar-footer {
+  padding: 16px;
+  border-top: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* Main Content Shell */
+.main-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  position: relative;
+}
+
+.chat-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 20px; border-bottom: 1px solid var(--line);
+  background: var(--white);
+}
+.sidebar-toggle-btn {
+  background: var(--bg-deep); border: 1px solid var(--line);
+  border-radius: var(--radius-sm); padding: 8px 12px;
+  font-size: 14px; display: flex; align-items: center; gap: 6px;
+  font-weight: 600; color: var(--ink);
+}
+.sidebar-toggle-btn:disabled {
+  opacity: 0.5; cursor: not-allowed;
+}
+
+.chat-log {
+  flex: 1;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  background: var(--bg);
+}
+
+/* Chat Bubbles */
+.bubble-row { display: flex; gap: 10px; max-width: 82%; }
+.bubble-row.from-user { align-self: flex-end; flex-direction: row-reverse; }
+.bubble-row.from-bot { align-self: flex-start; }
+.avatar {
+  width: 32px; height: 32px; border-radius: 50%; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--teal); color: var(--white); font-size: 14px; font-weight: 700;
+}
+.bubble-row.from-user .avatar { background: var(--ink-soft); }
+.bubble-col { display: flex; flex-direction: column; gap: 4px; }
+.bubble {
+  padding: 13px 16px; border-radius: var(--radius-md);
+  font-size: 14.5px; line-height: 1.55;
+  box-shadow: 0 1px 2px rgba(22,50,62,0.04);
+}
+.bubble-row.from-bot .bubble { background: var(--white); border: 1px solid var(--line); border-top-left-radius: 4px; }
+.bubble-row.from-user .bubble { background: var(--teal); color: var(--white); border-top-right-radius: 4px; box-shadow: none; }
+
+/* Anything attached to a bot message beyond plain text — MCQ
+   options, an appointment summary card, an OCR result — renders in
+   its own block below the text, each item stacked with consistent
+   spacing, so nothing ever runs together on one line. */
+.bubble-extra { margin-top: 10px; display: flex; flex-direction: column; gap: 8px; }
+.msg-options { display: flex; flex-direction: column; gap: 8px; }
+.msg-options .choice-card { margin-top: 0; }
+.bubble-extra-label { font-weight: 600; margin-bottom: 2px; }
+
+/* Small "appointment summary" card used for the pre-confirmation
+   review shown in chat, before the patient taps the final Confirm
+   button — kept visually distinct from the plain-text reply. */
+.appointment-card {
+  width: 100%; background: var(--white); border: 1px solid var(--line);
+  border-radius: var(--radius-md); padding: 14px 16px; text-align: left;
+}
+.appointment-card dl { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; margin: 8px 0 0; }
+.appointment-card dt {
+  font-family: var(--font-mono); font-size: 11px; color: var(--ink-soft);
+  text-transform: uppercase; letter-spacing: 0.03em; align-self: center;
+}
+.appointment-card dd { margin: 0; font-weight: 600; font-size: 13.5px; }
+
+.bubble-meta { display: flex; align-items: center; gap: 8px; margin-top: 2px; }
+.audio-btn {
+  display: flex; align-items: center; gap: 6px;
+  border: none; background: none; padding: 2px 4px;
+  font-family: var(--font-mono); font-size: 11px; color: var(--ink-soft);
+}
+.audio-btn:hover { color: var(--teal); }
+.audio-btn.is-playing { color: var(--teal-deep); font-weight: 600; }
+
+/* Suggested-question chips — sit above the composer, separated by
+   their own hairline + label so they read as a distinct "quick
+   start" tray rather than clutter jammed against the input box.
+   Horizontally scrollable so the row never wraps and pushes the
+   composer down. Edges fade so the scroll affordance is obvious
+   without needing a visible scrollbar. */
+.quick-actions-wrap {
+  border-top: 1px solid var(--line);
+  background: var(--bg-deep);
+  padding: 6px 0 8px;
+}
+.quick-actions-label {
+  font-size: 11px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
+  color: var(--ink-soft); padding: 0 20px 8px;
+}
+.quick-actions {
+  display: flex; gap: 10px; overflow-x: auto;
+  padding: 6px 20px 6px;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  mask-image: linear-gradient(to right, transparent 0, black 20px, black calc(100% - 20px), transparent 100%);
+}
+.quick-actions::-webkit-scrollbar { display: none; }
+.quick-chip {
+  flex-shrink: 0; background: var(--white); border: 1px solid var(--line);
+  border-radius: 999px; padding: 9px 16px; font-size: 13px; font-weight: 600;
+  color: var(--teal-deep); white-space: nowrap; box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+  transition: border-color 120ms ease, background 120ms ease, transform 120ms ease;
+}
+.quick-chip:hover { border-color: var(--teal); background: var(--teal-tint); transform: scale(1.03); }
+
+/* Composer Bar */
+.composer {
+  border-top: 1px solid var(--line);
+  background: var(--white);
+  padding: 12px 20px;
+}
+.composer-row { display: flex; align-items: center; gap: 8px; }
+.icon-btn {
+  width: 40px; height: 40px; border-radius: 50%; border: 1px solid var(--line);
+  background: var(--bg-deep); display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+.icon-btn:hover { border-color: var(--teal); }
+.icon-btn.is-recording { background: var(--coral-tint); border-color: var(--coral); animation: rec-pulse 1s infinite; }
+@keyframes rec-pulse { 0%,100% { box-shadow: 0 0 0 0 rgba(217,99,79,0.4); } 50% { box-shadow: 0 0 0 8px rgba(217,99,79,0); } }
+
+.composer input[type="text"] {
+  flex: 1; border: 1.5px solid var(--line); border-radius: 999px;
+  padding: 10px 18px; font-size: 14.5px;
+}
+.send-btn {
+  width: 40px; height: 40px; border-radius: 50%; border: none; background: var(--teal); color: var(--white);
+  display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+}
+
+/* ================================================================
+   4. PROFILE PANEL — REPLACES THE SIDEBAR (not the main chat)
+   Lives inside <aside class="sidebar">, toggled in place of
+   .sidebar-nav / .sidebar-footer via the .is-profile-mode class on
+   the sidebar itself (see rules above). The chat behind it is never
+   covered — only the sidebar's own real estate is reused.
+================================================================= */
+.sidebar-profile-panel {
+  display: none;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+.sidebar.is-profile-mode .sidebar-profile-panel {
+  display: flex;
+}
+.profile-panel-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+  padding: 20px 18px 8px;
+}
+.profile-panel-title {
+  font-family: var(--font-display); font-weight: 600; font-size: 19px;
+  margin-bottom: 4px;
+}
+.profile-panel-note {
+  font-size: 12px; line-height: 1.5; color: var(--ink-soft); margin-bottom: 16px;
+}
+.sidebar-profile-panel .close-profile-row {
+  padding: 16px 18px;
+  border-top: 1px solid var(--line);
+}
+
+.profile-card {
+  background: var(--bg); border: 1px solid var(--line); border-radius: var(--radius-md);
+  padding: 16px 16px 4px; margin-bottom: 16px; width: 100%;
+}
+.profile-card h4 {
+  font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.05em; text-transform: uppercase;
+  color: var(--teal-deep); margin-bottom: 6px;
+}
+.profile-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 10px 0; border-bottom: 1px solid var(--line);
+}
+.profile-row:last-child { border-bottom: none; }
+.profile-row .field-label { font-size: 12.5px; color: var(--ink-soft); flex-shrink: 0; }
+.profile-row input[readonly] {
+  border: none; background: transparent; text-align: right; color: var(--ink);
+  font-weight: 600; font-size: 13px; padding: 0; min-width: 0;
+}
+
+/* ================================================================
+   5. LOGIN — FULL-SCREEN INTERFACE (not a popup)
+   Covers the entire viewport like any other .screen, styled to
+   match the rest of the app's onboarding screens (same .field /
+   .stack / .btn treatment). It's shown/hidden directly rather than
+   swapped via showScreen(), since it needs to lie "on top of" the
+   main interface and disappear back to it on successful login,
+   without disturbing whatever screen-main was doing underneath.
+================================================================= */
+.login-interface-overlay {
+  position: fixed; inset: 0; z-index: 100;
+  background: var(--bg);
+  display: none;
+  flex-direction: column;
+  overflow-y: auto;
+}
+.login-interface-overlay.is-visible { display: flex; }
+.login-interface-topbar {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 20px clamp(20px,6vw,64px);
+}
+.login-interface-topbar .brand {
+  display: flex; align-items: center; gap: 10px;
+  font-family: var(--font-display); font-weight: 600; font-size: 20px;
+}
+
+/* Generic small confirm modal (used for "start over") — a compact
+   popup card is the right shape for a quick yes/no, unlike the
+   full-screen login interface above. */
+.confirm-modal-overlay {
+  position: fixed; inset: 0; z-index: 100;
+  background: rgba(22, 50, 62, 0.6);
+  display: none; align-items: center; justify-content: center;
+  padding: 20px;
+}
+.confirm-modal-overlay.is-visible { display: flex; }
+.confirm-modal-card {
+  background: var(--white); border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lift); width: 100%; max-width: 400px;
+  padding: 28px; text-align: center;
+}
+
+/* Water-fill "start over" transition. A fixed, full-screen, click-
+   through overlay: two wave layers slide up from the bottom to cover
+   the screen (the reset itself happens the instant it's fully
+   covered, hidden from view), then the whole thing fades + blurs
+   away. Kept to two simple keyframes so it stays quick and calm
+   rather than a showy animation. */
+.water-transition-overlay {
+  position: fixed; inset: 0; z-index: 500;
+  pointer-events: none;
+  opacity: 0;
+}
+.water-transition-overlay.is-playing { opacity: 1; }
+.water-transition-svg {
+  width: 100%; height: 100%;
+  display: block;
+  transform: translateY(100%);
+}
+.water-transition-overlay.is-filling .water-transition-svg {
+  animation: water-rise 620ms cubic-bezier(0.65, 0, 0.35, 1) forwards;
+}
+.water-transition-overlay.is-dissipating {
+  animation: water-dissipate 480ms ease forwards;
+}
+.water-wave-back { fill: var(--teal-tint); }
+.water-wave-front { fill: var(--teal); }
+@keyframes water-rise {
+  from { transform: translateY(100%); }
+  to   { transform: translateY(0%); }
+}
+@keyframes water-dissipate {
+  from { opacity: 1; filter: blur(0px); }
+  to   { opacity: 0; filter: blur(10px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .water-transition-overlay.is-filling .water-transition-svg,
+  .water-transition-overlay.is-dissipating { animation: none; }
+}
+
+/* Biometric/Fingerprint status */
+.fingerprint-ring {
+  width: 80px; height: 80px; border-radius: 50%; background: var(--teal-tint);
+  display: flex; align-items: center; justify-content: center; margin: 12px auto;
+}
+.scan-status { font-family: var(--font-mono); font-size: 13px; color: var(--teal-deep); min-height: 18px; }
+
+/* Emergency Dropdown on Emergency Page */
+.emergency-dropdown {
+  background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.3);
+  border-radius: var(--radius-sm); padding: 12px; margin-top: 16px; text-align: left;
+  color: var(--white);
+}
+.emergency-dropdown summary { cursor: pointer; font-weight: 600; font-size: 14px; }
+.emergency-dropdown p { margin-top: 8px; font-size: 13.5px; line-height: 1.5; }
+
+#screen-emergency { background: var(--coral); color: var(--white); }
+#screen-emergency p.lede { color: rgba(255,255,255,0.9); }
+</style>
+</head>
+<body>
+
+<div id="app">
+
+  <!-- ============================================================
+       SCREEN 1 — WELCOME & TERMS & LANGUAGE (COMBINED SETUP PAGE)
+       Contains Terms & Conditions popup/scrollbox and language
+       detection & drop-down selector.
+  ============================================================= -->
+  <section class="screen is-active" id="screen-welcome">
+    <div class="center-column">
+      <svg width="48" height="48" viewBox="0 0 56 56" aria-hidden="true">
+        <circle cx="28" cy="28" r="27" fill="var(--teal-tint)"/>
+        <path d="M8 32 Q 20 20, 28 32 T 48 32" stroke="var(--teal)" stroke-width="3" fill="none" stroke-linecap="round"/>
+      </svg>
+      <p class="eyebrow" style="margin-top:10px;">AI Hospital Front Desk</p>
+      <h1 class="display">Welcome to cove.</h1>
+      <p class="lede" style="margin-bottom: 16px;">Before we begin, please review our terms and select your preferred language.</p>
+
+      <div class="stack">
+        <!-- Terms and Conditions Scrollable Box -->
+        <div class="field">
+          <label>Terms and Conditions</label>
+          <div class="tc-scroll-box">
+            <p><strong>Terms of Service &amp; Privacy Notice (Placeholder)</strong></p>
+            <p>Welcome to cove AI Hospital Front Desk. By using this service, you consent to processing your intake information for scheduling and administrative guidance. This tool provides automated front-desk triage and assistance. In case of medical emergencies, please dial 911 immediately.</p>
+            <p>Your records and communication are protected in accordance with standard data safety standards. Information provided will be used by hospital staff to fulfill your appointment or medical inquiry requests.</p>
+          </div>
+          <label class="tc-checkbox-row">
+            <input type="checkbox" id="tc-accept-check" onchange="toggleTermsAcceptance(this.checked)">
+            <span>I accept the Terms and Conditions</span>
+          </label>
+        </div>
+
+        <!-- Language Preference & Detection Box -->
+        <div class="field">
+          <label for="welcome-lang-select">What language do you prefer?</label>
+          <!-- Complete 27 Supported Languages Dropdown -->
+          <select id="welcome-lang-select" onchange="setAppLanguage(this.value)" style="margin-bottom: 10px;">
+            <option value="en">English</option>
+            <option value="es">Spanish (Español)</option>
+            <option value="fr">French (Français)</option>
+            <option value="de">German (Deutsch)</option>
+            <option value="it">Italian (Italiano)</option>
+            <option value="pt">Portuguese (Português)</option>
+            <option value="nl">Dutch (Nederlands)</option>
+            <option value="da">Danish (Dansk)</option>
+            <option value="sv">Swedish (Svenska)</option>
+            <option value="fi">Finnish (Suomi)</option>
+            <option value="no">Norwegian (Norsk)</option>
+            <option value="pl">Polish (Polski)</option>
+            <option value="cs">Czech (Čeština)</option>
+            <option value="ro">Romanian (Română)</option>
+            <option value="hu">Hungarian (Magyar)</option>
+            <option value="bg">Bulgarian (Български)</option>
+            <option value="el">Greek (Ελληνικά)</option>
+            <option value="uk">Ukrainian (Українська)</option>
+            <option value="ru">Russian (Русский)</option>
+            <option value="tr">Turkish (Türkçe)</option>
+            <option value="id">Indonesian (Bahasa Indonesia)</option>
+            <option value="vi">Vietnamese (Tiếng Việt)</option>
+            <option value="th">Thai (ไทย)</option>
+            <option value="ja">Japanese (日本語)</option>
+            <option value="ko">Korean (한국어)</option>
+            <option value="zh">Chinese (中文)</option>
+            <option value="hi">Hindi (हिन्दी)</option>
+          </select>
+
+          <!-- Type or speak auto-detection box -->
+          <label for="detect-input" style="font-size: 12px;">Type or speak to auto-detect language</label>
+          <div style="display:flex; gap:8px;">
+            <input id="detect-input" type="text" placeholder="e.g. Necesito una cita..." oninput="runLanguageDetectionStub(this.value)">
+            <button type="button" class="icon-btn" id="lang-mic-btn" onclick="toggleLanguageVoiceCapture()" title="Speak to detect">🎤</button>
+          </div>
+          <p id="detect-result" style="font-family:var(--font-mono); font-size:12px; color:var(--teal); margin-top:4px; text-align:left;">&nbsp;</p>
+        </div>
+
+        <button class="btn btn-primary btn-block" id="btn-continue-welcome" disabled onclick="enterMainChatInterface()">Accept &amp; Continue</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================
+       SCREEN 2 — MAIN INTERFACE (CHAT + SIDEBAR LAYOUT)
+  ============================================================= -->
+  <section class="screen" id="screen-main">
+    <div class="main-layout">
+      
+      <!-- SIDEBAR
+           Toggleable, on by default when the main interface is first
+           entered (see enterMainChatInterface()). Clicking "Profile"
+           swaps this sidebar's OWN content over to the profile panel
+           below — it does not cover the chat, and the sidebar can't
+           be collapsed again until "Close profile" is tapped. -->
+      <aside class="sidebar" id="app-sidebar">
+        <div class="sidebar-header">
+          <div class="brand">
+            <svg width="24" height="24" viewBox="0 0 56 56"><circle cx="28" cy="28" r="27" fill="var(--teal-tint)"/><path d="M8 32 Q 20 20, 28 32 T 48 32" stroke="var(--teal)" stroke-width="3" fill="none"/></svg>
+            cove
+          </div>
+        </div>
+
+        <!-- Assistant / Profile nav — hidden (not removed) while the
+             profile panel below is showing. -->
+        <nav class="sidebar-nav" id="sidebar-nav">
+          <button class="sidebar-btn is-active" id="side-nav-assistant" onclick="switchMainTab('assistant')">💬 Assistant</button>
+          <button class="sidebar-btn" id="side-nav-profile" onclick="switchMainTab('profile')">👤 Profile</button>
+        </nav>
+        <div class="sidebar-footer" id="sidebar-footer">
+          <!-- Button to allow existing users to log in -->
+          <button class="btn btn-ghost btn-block" style="font-size:13px;" onclick="openLoginModal()">Log in as existing user</button>
+        </div>
+
+        <!-- PROFILE PANEL — replaces sidebar-nav + sidebar-footer
+             above (same footprint as the sidebar itself), rather
+             than overlaying the main chat area. -->
+        <div class="sidebar-profile-panel" id="sidebar-profile-panel">
+          <div class="profile-panel-scroll">
+            <h3 class="profile-panel-title">Patient profile</h3>
+            <p class="profile-panel-note">Read-only here — ask the assistant in chat to update anything, e.g. "my name is actually...".</p>
+
+            <div class="profile-card">
+              <h4>Patient</h4>
+              <div class="profile-row"><span class="field-label">Full name</span><input type="text" id="prof-name" value="Jane Doe" readonly></div>
+              <div class="profile-row"><span class="field-label">Status</span><input type="text" id="prof-status" value="Not set" readonly></div>
+              <div class="profile-row"><span class="field-label">Visit type</span><input type="text" id="prof-visit-type" value="Not set" readonly></div>
+            </div>
+
+            <div class="profile-card">
+              <h4>Settings</h4>
+              <div class="profile-row"><span class="field-label">Preferred language</span><input type="text" id="prof-lang" value="English" readonly></div>
+              <div class="profile-row"><span class="field-label">Documents processed</span><input type="text" id="prof-docs" value="0" readonly></div>
+            </div>
+          </div>
+          <div class="close-profile-row">
+            <button class="btn btn-primary btn-block" id="close-profile-btn" onclick="closeProfileOverlay()">Close profile</button>
+          </div>
+        </div>
+      </aside>
+
+      <!-- MAIN CONTENT AREA -->
+      <main class="main-content">
+        <!-- Chat Header -->
+        <header class="chat-header">
+          <div style="display:flex; align-items:center; gap:10px;">
+            <button class="sidebar-toggle-btn" id="sidebar-toggle-btn" onclick="toggleSidebar()">☰ Menu</button>
+            <span class="eyebrow" id="current-lang-display">EN</span>
+          </div>
+          <div style="display:flex; align-items:center; gap:8px;">
+            <!-- Clears the whole conversation and every piece of
+                 patient state, then returns all the way to the
+                 Terms & Conditions / language screen. Confirmed via
+                 an in-page modal (see #reset-confirm-overlay) rather
+                 than window.confirm(), which can be silently blocked
+                 in embedded/sandboxed preview contexts. -->
+            <button class="icon-btn" id="reset-btn" title="Clear conversation and start over" aria-label="Clear conversation and start over" onclick="openResetConfirm()">↺</button>
+            <button class="btn btn-emergency" style="padding: 8px 14px; font-size: 13px;" onclick="goToEmergencyScreen('User clicked Emergency button.')">⚠ Emergency</button>
+          </div>
+        </header>
+
+        <!-- Chat Log Area -->
+        <div class="chat-log" id="chat-log">
+          <!-- Messages will be injected dynamically -->
+        </div>
+
+        <!-- Suggested questions — tapping one drops straight into the
+             same send pipeline as typing, so it reads as a ready-made
+             next message rather than a separate menu. -->
+        <div class="quick-actions-wrap">
+          <p class="quick-actions-label">Quick start</p>
+          <div class="quick-actions" id="quick-actions">
+            <button class="quick-chip" onclick="askSuggested('I need to book an appointment')">📅 Book an appointment</button>
+            <button class="quick-chip" onclick="askSuggested('What are your visiting hours?')">🕐 Visiting hours</button>
+            <button class="quick-chip" onclick="askSuggested('Can you help me understand a document?')">📄 Explain a document</button>
+            <button class="quick-chip" onclick="askSuggested('What insurance plans do you accept?')">💳 Insurance</button>
+            <button class="quick-chip" onclick="askSuggested('I need to reschedule my appointment')">🔁 Reschedule</button>
+          </div>
+        </div>
+
+        <!-- Composer Bar -->
+        <div class="composer">
+          <div class="composer-row">
+            <!-- OCR File Upload Icon (Calls ocr_tool and updates translated_doc_count) -->
+            <button class="icon-btn" title="Upload Document (OCR)" onclick="triggerFileInput()">📎</button>
+            <input type="file" id="ocr-file-input" style="display:none" accept=".pdf,.jpg,.jpeg,.png" onchange="handleOcrFileUpload(event)">
+
+            <!-- Voice Audio Recording Button (Plays click sound & calls transcription_tool) -->
+            <button class="icon-btn" id="mic-btn" title="Record Voice Message" onclick="toggleVoiceInputRecording()">🎤</button>
+
+            <input type="text" id="chat-input" placeholder="Type a message..." onkeydown="if(event.key==='Enter') sendTextMessage();">
+            <button class="send-btn" onclick="sendTextMessage()">➤</button>
+          </div>
+        </div>
+
+      </main>
+    </div>
+  </section>
+
+  <!-- ============================================================
+       SCREEN 3 — CONFIRMATION SCREEN & PDF GENERATION
+  ============================================================= -->
+  <section class="screen" id="screen-confirmation">
+    <div class="center-column">
+      <div style="font-size:48px; margin-bottom:8px;">✅</div>
+      <h2 class="display">Appointment Confirmed</h2>
+      <p class="lede">Your appointment details have been booked successfully.</p>
+
+      <div class="profile-card" style="margin-top:20px; text-align:left;">
+        <p><strong>Doctor:</strong> Dr. Alana Reyes (Primary Care)</p>
+        <p><strong>Date &amp; Time:</strong> Tomorrow at 10:00 AM</p>
+        <p><strong>Location:</strong> Main Campus, 2nd Floor</p>
+        <p><strong>Confirmation Code:</strong> <span id="pdf-conf-code">COVE-8842</span></p>
+      </div>
+
+      <div class="stack" style="margin-top:16px;">
+        <!-- Code that generates and downloads PDF when clicked -->
+        <button class="btn btn-primary btn-block" onclick="generateAppointmentPDF()">Download PDF Summary</button>
+        <button class="btn btn-ghost btn-block" onclick="showScreen('screen-main')">Back to Chat</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================
+       SCREEN 4 — EMERGENCY SCREEN
+  ============================================================= -->
+  <section class="screen" id="screen-emergency">
+    <div class="center-column">
+      <div style="font-size:56px; margin-bottom:12px;">⚠</div>
+      <h1 class="display">Medical Emergency Flagged</h1>
+      <p class="lede">If you are experiencing a life-threatening medical emergency, please call 911 immediately.</p>
+
+      <div class="stack" style="margin-top:20px;">
+        <!-- Output text & reason dropdown -->
+        <div id="emergency-output-text" style="font-weight: 600; font-size: 16px;">
+          Immediate medical assistance recommended.
+        </div>
+
+        <!-- Dropdown option for emergency reason -->
+        <details class="emergency-dropdown">
+          <summary>Why was this marked an emergency?</summary>
+          <p id="emergency-reason-text">Your request contained urgent medical indicators requiring emergency review.</p>
+        </details>
+
+        <a class="btn btn-primary btn-block" style="background:#fff; color:var(--coral-deep); margin-top:16px;" href="tel:911">Call 911 Now</a>
+        <button class="btn btn-ghost btn-block" style="color:#fff; border-color:rgba(255,255,255,0.6);" onclick="showScreen('screen-main')">Return to Chat</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================
+       LOGIN — FULL-SCREEN INTERFACE (existing patients)
+       Takes over the entire viewport like any other screen, rather
+       than a small popup. Disappears the instant login succeeds
+       (password or fingerprint), dropping the patient straight back
+       into whatever the main interface was showing underneath.
+  ============================================================= -->
+  <div class="login-interface-overlay" id="login-interface-overlay">
+    <div class="login-interface-topbar">
+      <div class="brand">
+        <svg width="24" height="24" viewBox="0 0 56 56"><circle cx="28" cy="28" r="27" fill="var(--teal-tint)"/><path d="M8 32 Q 20 20, 28 32 T 48 32" stroke="var(--teal)" stroke-width="3" fill="none"/></svg>
+        cove
+      </div>
+      <button type="button" class="btn btn-ghost" style="padding:8px 16px; font-size:13px;" onclick="closeLoginModal()">Cancel</button>
+    </div>
+
+    <!-- Password panel (default view) -->
+    <div class="center-column" id="login-password-panel">
+      <p class="eyebrow">Existing patient</p>
+      <h2 class="display">Welcome back.</h2>
+      <p class="lede">Log in and we'll only ask you what's changed since your last visit.</p>
+      <div class="stack" style="margin-top:18px;">
+        <div class="field">
+          <label for="login-email-input">Email or phone number</label>
+          <input type="text" id="login-email-input" placeholder="you@example.com" autocomplete="username" onkeydown="if(event.key==='Enter'){ event.preventDefault(); submitExistingLogin(); }">
+        </div>
+        <div class="field">
+          <label for="login-pass-input">Password</label>
+          <input type="password" id="login-pass-input" placeholder="••••••••" autocomplete="current-password" onkeydown="if(event.key==='Enter'){ event.preventDefault(); submitExistingLogin(); }">
+        </div>
+        <button class="btn btn-primary btn-block" id="login-submit-btn" onclick="submitExistingLogin()">Log in</button>
+        <p class="scan-status" id="login-error-text" style="display:none;color:var(--coral);">&nbsp;</p>
+        <!-- Fingerprint is an ALTERNATIVE way in, not a second factor
+             stacked on top of the password — it skips credentials
+             entirely and switches this same full-screen interface
+             over to the fingerprint panel below. -->
+        <button type="button" class="btn btn-ghost btn-block" onclick="showLoginFingerprintPanel()">Use fingerprint instead</button>
+        <!-- New patients don't have credentials yet — this switches
+             the same overlay over to the sign-up panel below, which
+             is what actually calls register_patient. -->
+        <button type="button" class="btn btn-ghost btn-block" onclick="showLoginSignupPanel()">New here? Create an account</button>
+      </div>
+    </div>
+
+    <!-- Fingerprint panel (hidden until "Use fingerprint instead") -->
+    <div class="center-column" id="login-fingerprint-panel" style="display:none;">
+      <div class="fingerprint-ring">
+        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="var(--teal)" stroke-width="1.6">
+          <path d="M12 2a5 5 0 0 0-5 5v2a5 5 0 0 0 10 0V7a5 5 0 0 0-5-5Z"/>
+          <path d="M7 13v1a5 5 0 0 0 10 0v-1"/>
+          <path d="M4 12v1a8 8 0 0 0 16 0v-1"/>
+          <path d="M12 9v6"/>
+        </svg>
+      </div>
+      <h2 class="display">Confirm it's you</h2>
+      <p class="lede">Use your device's fingerprint, Face ID, or screen lock to verify it's you.</p>
+      <p class="scan-status" id="fingerprint-status">&nbsp;</p>
+      <div class="stack" style="margin-top:10px;">
+        <button class="btn btn-primary btn-block" onclick="triggerFingerprintAuth()">Verify with fingerprint</button>
+        <button type="button" class="btn btn-ghost btn-block" onclick="showLoginPasswordPanel()">Use email &amp; password instead</button>
+      </div>
+    </div>
+
+    <!-- Sign-up panel (hidden until "New here? Create an account") —
+         this is the only place register_patient is called, since
+         it's the one moment we actually have a brand-new patient's
+         details to register. -->
+    <div class="center-column" id="login-signup-panel" style="display:none;">
+      <p class="eyebrow">New patient</p>
+      <h2 class="display">Create your account.</h2>
+      <p class="lede">Just enough to register you — we'll ask the rest in chat.</p>
+      <div class="stack" style="margin-top:18px;">
+        <div class="field">
+          <label for="signup-name-input">Full name</label>
+          <input type="text" id="signup-name-input" placeholder="Jordan Rivera" autocomplete="name">
+        </div>
+        <div class="field">
+          <label for="signup-email-input">Email or phone number</label>
+          <input type="text" id="signup-email-input" placeholder="you@example.com" autocomplete="username">
+        </div>
+        <div class="field">
+          <label for="signup-pass-input">Create a password</label>
+          <input type="password" id="signup-pass-input" placeholder="••••••••" autocomplete="new-password">
+        </div>
+        <button class="btn btn-primary btn-block" id="signup-submit-btn" onclick="submitNewPatientRegistration()">Create account</button>
+        <p class="scan-status" id="signup-error-text" style="display:none;color:var(--coral);">&nbsp;</p>
+        <button type="button" class="btn btn-ghost btn-block" onclick="showLoginPasswordPanel()">Already have an account? Log in</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================================
+       MODAL — CONFIRM "CLEAR CONVERSATION & START OVER"
+       This one stays a compact popup (a quick yes/no doesn't need
+       the full screen) — built as an in-page modal rather than
+       window.confirm(), which is frequently blocked or
+       auto-dismissed in embedded previews.
+  ============================================================= -->
+  <div class="confirm-modal-overlay" id="reset-confirm-overlay">
+    <div class="confirm-modal-card">
+      <h2 class="display" style="font-size:20px; margin-bottom:6px;">Start over?</h2>
+      <p style="font-size:13.5px; color:var(--ink-soft); margin-bottom:18px;">This clears the whole conversation and everything entered so far, and takes you back to the very beginning.</p>
+      <div class="stack">
+        <button class="btn btn-primary btn-block" onclick="confirmReset()">Yes, clear everything</button>
+        <button class="btn btn-ghost btn-block" style="border:none;" onclick="closeResetConfirm()">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================================
+       WATER-FILL TRANSITION — plays over a "start over" reset.
+       Two soft wave layers rise up to cover the whole screen, the
+       state swap happens underneath while fully covered, then the
+       water dissipates (fades + blurs away) to reveal the fresh
+       welcome screen. Purely decorative — toggled by JS classes
+       (.is-playing / .is-filling / .is-dissipating), never blocks
+       clicks (pointer-events: none).
+  ============================================================= -->
+  <div class="water-transition-overlay" id="water-transition-overlay" aria-hidden="true">
+    <svg class="water-transition-svg" viewBox="0 0 100 100" preserveAspectRatio="none">
+      <path class="water-wave water-wave-back" d="M0,12 Q25,4 50,12 T100,12 V100 H0 Z"></path>
+      <path class="water-wave water-wave-front" d="M0,16 Q25,8 50,16 T100,16 V100 H0 Z"></path>
+    </svg>
+  </div>
+
+</div>
+
+
+<!-- ================================================================
+     JAVASCRIPT LOGIC
+================================================================= -->
+<script>
+/* ==================================================================
+   STATE MANAGEMENT
+   Tracks language, patient status, doc counts, and sidebar toggling.
+=================================================================== */
+const patientState = {
+  isNewPatient: null,            // true | false | null (asked in chat)
+  visitType: null,               // 'followup' | 'new' (asked in chat for existing)
+  symptoms: null,                // free-text reason for visit, sent to the department-routing RAG pipeline
+  awaitingSymptoms: false,       // true while the chat is waiting on the symptom question above
+  language: 'en',
+  languageLabel: 'English',
+  translated_doc_count: 0,       // Required parameter for ocr_text tool
+  isLoggedIn: false,
+  sidebarOpen: true,
+  profileOpen: false,
+  pendingAppointmentAction: null // Stores action while asking patient status
+};
+
+const SUPPORTED_LANGUAGES = {
+  en: 'English', es: 'Spanish', fr: 'French', de: 'German', it: 'Italian',
+  pt: 'Portuguese', nl: 'Dutch', da: 'Danish', sv: 'Swedish', fi: 'Finnish',
+  no: 'Norwegian', pl: 'Polish', cs: 'Czech', ro: 'Romanian', hu: 'Hungarian',
+  bg: 'Bulgarian', el: 'Greek', uk: 'Ukrainian', ru: 'Russian', tr: 'Turkish',
+  id: 'Indonesian', vi: 'Vietnamese', th: 'Thai', ja: 'Japanese', ko: 'Korean',
+  zh: 'Chinese', hi: 'Hindi'
+};
+
+/* ==================================================================
+   NAVIGATION & SCREEN ROUTER
+=================================================================== */
+function showScreen(screenId) {
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('is-active'));
+  const target = document.getElementById(screenId);
+  if(target) target.classList.add('is-active');
+}
+
+/* Enable welcome screen button only when terms checkbox is checked */
+function toggleTermsAcceptance(checked) {
+  document.getElementById('btn-continue-welcome').disabled = !checked;
+}
+
+/* Set language from welcome page dropdown */
+function setAppLanguage(code) {
+  patientState.language = code;
+  patientState.languageLabel = SUPPORTED_LANGUAGES[code] || code;
+  document.getElementById('current-lang-display').textContent = code.toUpperCase();
+  document.getElementById('prof-lang').value = patientState.languageLabel;
+}
+
+/* Language auto-detection stub */
+function runLanguageDetectionStub(text) {
+  const res = document.getElementById('detect-result');
+  if(!text.trim()) { res.textContent = '\u00A0'; return; }
+  
+  if (/\b(hola|gracias|cita)\b/i.test(text)) setWelcomeLang('es');
+  else if (/\b(bonjour|merci)\b/i.test(text)) setWelcomeLang('fr');
+  else if (/\b(hallo|danke)\b/i.test(text)) setWelcomeLang('de');
+  else setWelcomeLang('en');
+  
+  res.textContent = `Detected: ${patientState.languageLabel}`;
+}
+function setWelcomeLang(code) {
+  document.getElementById('welcome-lang-select').value = code;
+  setAppLanguage(code);
+}
+
+/* Voice capture on welcome screen */
+function toggleLanguageVoiceCapture() {
+  playAudioClickCue();
+  runLanguageDetectionStub('hola doctor');
+}
+
+/* Transition from Welcome/Terms to Main Interface */
+function enterMainChatInterface() {
+  showScreen('screen-main');
+  initAssistantChat();
+}
+
+/* ==================================================================
+   SIDEBAR & PROFILE OVERLAY CONTROLS
+=================================================================== */
+function toggleSidebar() {
+  if (patientState.profileOpen) return; // Untoggleable when profile is open
+  const sidebar = document.getElementById('app-sidebar');
+  patientState.sidebarOpen = !patientState.sidebarOpen;
+  sidebar.classList.toggle('is-collapsed', !patientState.sidebarOpen);
+}
+
+/* Opening the profile swaps the SIDEBAR's own content (nav +
+   footer) over to the profile panel — the .is-profile-mode class
+   drives that via CSS. It never covers the main chat area. The
+   sidebar toggle is disabled for the duration so the profile panel
+   can't be collapsed away by accident; toggling reverts to normal
+   the moment "Close profile" is tapped. */
+function openProfileFromSidebar() {
+  patientState.profileOpen = true;
+  document.getElementById('app-sidebar').classList.add('is-profile-mode');
+  document.getElementById('side-nav-profile').classList.add('is-active');
+  document.getElementById('side-nav-assistant').classList.remove('is-active');
+  document.getElementById('sidebar-toggle-btn').disabled = true;
+}
+
+function closeProfileOverlay() {
+  patientState.profileOpen = false;
+  document.getElementById('app-sidebar').classList.remove('is-profile-mode');
+  document.getElementById('side-nav-profile').classList.remove('is-active');
+  document.getElementById('side-nav-assistant').classList.add('is-active');
+  document.getElementById('sidebar-toggle-btn').disabled = false;
+}
+
+function switchMainTab(tab) {
+  if (tab === 'profile') openProfileFromSidebar();
+  else closeProfileOverlay();
+}
+
+/* ==================================================================
+   RESET / START OVER
+   Wipes the chat log and every piece of in-memory patient state,
+   then routes all the way back to the Terms & Conditions / language
+   screen — same as a first-time visit. Reachable any time from the
+   header's ↺ button; confirmed via the in-page modal above.
+=================================================================== */
+function openResetConfirm() {
+  document.getElementById('reset-confirm-overlay').classList.add('is-visible');
+}
+function closeResetConfirm() {
+  document.getElementById('reset-confirm-overlay').classList.remove('is-visible');
+}
+function confirmReset() {
+  closeResetConfirm();
+  playWaterTransition(resetConversation);
+}
+
+/* Plays the water-fill/dissipate transition and calls onCovered()
+   the instant the screen is fully covered — that's when the actual
+   state reset happens, so the patient never sees the swap itself. */
+function playWaterTransition(onCovered) {
+  const overlay = document.getElementById('water-transition-overlay');
+  if (!overlay) { if (onCovered) onCovered(); return; }
+
+  overlay.classList.remove('is-dissipating');
+  overlay.classList.add('is-playing', 'is-filling');
+
+  setTimeout(() => {
+    if (onCovered) onCovered();
+    overlay.classList.remove('is-filling');
+    overlay.classList.add('is-dissipating');
+
+    setTimeout(() => {
+      overlay.classList.remove('is-playing', 'is-dissipating');
+    }, 480);
+  }, 620);
+}
+function resetConversation() {
+  // Reset all in-memory patient state back to its initial values.
+  patientState.isNewPatient = null;
+  patientState.visitType = null;
+  patientState.symptoms = null;
+  patientState.awaitingSymptoms = false;
+  patientState.language = 'en';
+  patientState.languageLabel = 'English';
+  patientState.translated_doc_count = 0;
+  patientState.isLoggedIn = false;
+  patientState.sidebarOpen = true;
+  patientState.profileOpen = false;
+  patientState.pendingAppointmentAction = null;
+
+  // Clear the chat log and composer.
+  chatLog.innerHTML = '';
+  const chatInput = document.getElementById('chat-input');
+  if (chatInput) chatInput.value = '';
+
+  // Sidebar: expanded, showing Assistant (not Profile), toggle re-enabled.
+  const sidebar = document.getElementById('app-sidebar');
+  sidebar.classList.remove('is-collapsed', 'is-profile-mode');
+  document.getElementById('sidebar-toggle-btn').disabled = false;
+  document.getElementById('side-nav-assistant').classList.add('is-active');
+  document.getElementById('side-nav-profile').classList.remove('is-active');
+
+  // Profile fields back to their untouched defaults.
+  document.getElementById('prof-name').value = 'Jane Doe';
+  document.getElementById('prof-status').value = 'Not set';
+  document.getElementById('prof-visit-type').value = 'Not set';
+  document.getElementById('prof-lang').value = 'English';
+  document.getElementById('prof-docs').value = '0';
+
+  // Close the login interface if it happened to be open, and reset
+  // it back to the password panel with cleared fields for next time.
+  closeLoginModal();
+  showLoginPasswordPanel();
+  const loginEmail = document.getElementById('login-email-input');
+  if (loginEmail) loginEmail.value = '';
+  const loginPass = document.getElementById('login-pass-input');
+  if (loginPass) loginPass.value = '';
+  const fpStatus = document.getElementById('fingerprint-status');
+  if (fpStatus) fpStatus.textContent = '\u00A0';
+  const signupName = document.getElementById('signup-name-input');
+  if (signupName) signupName.value = '';
+  const signupEmail = document.getElementById('signup-email-input');
+  if (signupEmail) signupEmail.value = '';
+  const signupPass = document.getElementById('signup-pass-input');
+  if (signupPass) signupPass.value = '';
+  hideLoginError();
+  hideSignupError();
+  setLoginButtonBusy(false);
+
+  // Welcome screen: language back to English, T&C unchecked, the
+  // "Accept & Continue" button disabled again, detect field cleared.
+  document.getElementById('welcome-lang-select').value = 'en';
+  document.getElementById('current-lang-display').textContent = 'EN';
+  const tcCheck = document.getElementById('tc-accept-check');
+  if (tcCheck) tcCheck.checked = false;
+  document.getElementById('btn-continue-welcome').disabled = true;
+  const detectInput = document.getElementById('detect-input');
+  if (detectInput) detectInput.value = '';
+  const detectResult = document.getElementById('detect-result');
+  if (detectResult) detectResult.textContent = '\u00A0';
+
+  showScreen('screen-welcome');
+}
+
+/* ==================================================================
+   LOGIN — FULL-SCREEN INTERFACE & FINGERPRINT AUTH
+=================================================================== */
+function openLoginModal() {
+  // Always reopen on the password panel, regardless of which panel
+  // was showing last time it was closed.
+  showLoginPasswordPanel();
+  document.getElementById('login-interface-overlay').classList.add('is-visible');
+}
+function closeLoginModal() {
+  document.getElementById('login-interface-overlay').classList.remove('is-visible');
+}
+function showLoginPasswordPanel() {
+  document.getElementById('login-password-panel').style.display = 'flex';
+  document.getElementById('login-fingerprint-panel').style.display = 'none';
+  document.getElementById('login-signup-panel').style.display = 'none';
+}
+function showLoginFingerprintPanel() {
+  document.getElementById('login-password-panel').style.display = 'none';
+  document.getElementById('login-signup-panel').style.display = 'none';
+  document.getElementById('login-fingerprint-panel').style.display = 'flex';
+}
+function showLoginSignupPanel() {
+  document.getElementById('login-password-panel').style.display = 'none';
+  document.getElementById('login-fingerprint-panel').style.display = 'none';
+  document.getElementById('login-signup-panel').style.display = 'flex';
+}
+/* Logs an existing patient in by actually checking their credentials
+   against the backend, rather than trusting whatever's in the fields.
+   Written as async/await against a Promise-returning stub so swapping
+   login_patient()'s body for a real fetch() call later is a drop-in
+   change — nothing here needs to change shape. */
+async function submitExistingLogin() {
+  const email = document.getElementById('login-email-input').value.trim();
+  const password = document.getElementById('login-pass-input').value;
+  hideLoginError();
+
+  if (!email || !password) {
+    showLoginError('Please enter your email and password.');
+    return;
+  }
+
+  setLoginButtonBusy(true);
+  try {
+    // Calls backend login_patient to verify credentials
+    const result = await login_patient({ method: 'password', email, password });
+    if (!result.success) {
+      showLoginError(result.reason || "We couldn't find an account with that email and password.");
+      return;
+    }
+    completeLogin(false);
+  } catch (err) {
+    showLoginError('Something went wrong reaching the server. Please try again.');
+  } finally {
+    setLoginButtonBusy(false);
+  }
+}
+
+function setLoginButtonBusy(isBusy) {
+  const btn = document.getElementById('login-submit-btn');
+  if (!btn) return;
+  btn.disabled = isBusy;
+  btn.textContent = isBusy ? 'Logging in…' : 'Log in';
+}
+
+function showLoginError(message) {
+  const el = document.getElementById('login-error-text');
+  if (!el) return;
+  el.textContent = message;
+  el.style.display = 'block';
+}
+function hideLoginError() {
+  const el = document.getElementById('login-error-text');
+  if (el) el.style.display = 'none';
+}
+
+/* Shared "successful login" side effects, whether the patient got in
+   via password or fingerprint. */
+function completeLogin(isNewPatient) {
+  patientState.isLoggedIn = true;
+  patientState.isNewPatient = isNewPatient;
+  document.getElementById('prof-status').value = isNewPatient ? 'New Patient' : 'Existing Patient';
+  closeLoginModal();
+  addBotMessage(isNewPatient
+    ? "Welcome! You're logged in as a new patient."
+    : "Welcome back! You are now logged in as an existing patient.");
+}
+
+/* Collects the sign-up form and hands it to the backend register_patient
+   call. This is the one place in the whole app that registers a brand
+   new patient record. */
+async function submitNewPatientRegistration() {
+  const name = document.getElementById('signup-name-input').value.trim();
+  const email = document.getElementById('signup-email-input').value.trim();
+  const password = document.getElementById('signup-pass-input').value;
+  hideSignupError();
+
+  if (!name || !email || !password) {
+    showSignupError("Please fill in your name, email, and a password before creating an account.");
+    return;
+  }
+
+  const signupBtn = document.getElementById('signup-submit-btn');
+  if (signupBtn) { signupBtn.disabled = true; signupBtn.textContent = 'Creating account…'; }
+
+  try {
+    // Calls backend register_patient to create the new patient record
+    const result = await register_patient({ name, email, password, language: patientState.language });
+    if (!result.success) {
+      showSignupError(result.reason || 'That email may already be registered.');
+      return;
+    }
+    completeLogin(true);
+    document.getElementById('prof-lang').value = patientState.languageLabel;
+    addBotMessage(`Your account has been created (Patient ID: ${result.patientId}).`);
+  } catch (err) {
+    showSignupError('Something went wrong reaching the server. Please try again.');
+  } finally {
+    if (signupBtn) { signupBtn.disabled = false; signupBtn.textContent = 'Create account'; }
+  }
+}
+
+function showSignupError(message) {
+  const el = document.getElementById('signup-error-text');
+  if (!el) return;
+  el.textContent = message;
+  el.style.display = 'block';
+}
+function hideSignupError() {
+  const el = document.getElementById('signup-error-text');
+  if (el) el.style.display = 'none';
+}
+
+/* Fingerprint is its own credential-free path — it must NOT funnel
+   through submitExistingLogin(), which requires the email/password
+   fields to be filled. It calls login_patient() with method:
+   'biometric' instead. */
+async function triggerFingerprintAuth() {
+  const status = document.getElementById('fingerprint-status');
+  status.textContent = "Scanning biometric...";
+  try {
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    // Calls backend login_patient with the device's biometric assertion
+    const result = await login_patient({ method: 'biometric' });
+    if (!result.success) {
+      status.textContent = result.reason || "Fingerprint not recognized. Try again or use your password.";
+      return;
+    }
+    status.textContent = "Fingerprint verified ✓";
+    setTimeout(() => completeLogin(false), 600);
+  } catch (err) {
+    status.textContent = "Something went wrong. Please try again.";
+  }
+}
+
+/* ==================================================================
+   AUDIO SOUND CUE & BACKEND INTEGRATION STUBS
+=================================================================== */
+/* Play sound click cue when user clicks recording */
+function playAudioClickCue() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(600, ctx.currentTime);
+    gain.gain.setValueAtTime(0.1, ctx.currentTime);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start();
+    osc.stop(ctx.currentTime + 0.12);
+  } catch(e) { console.log('Audio cue played'); }
+}
+
+/* Backend Transcription Tool Call */
+function transcription_tool(audioData) {
+  console.log('[BACKEND CALL] Calling transcription_tool with audio data');
+  return "I would like to book an appointment with a doctor.";
+}
+
+/* Backend TTS Tool Call for chat bubbles */
+function tts_tool(params) {
+  console.log('[BACKEND CALL] Calling tts_tool for text:', params.text, 'language:', params.language);
+  playAudioClickCue();
+}
+
+/* Backend OCR Tool Call - Requires translated_doc_count parameter */
+function ocr_tool(params) {
+  console.log('[BACKEND CALL] Calling ocr_tool with file:', params.fileName, 'translated_doc_count:', params.translated_doc_count);
+  return `OCR Extracted Text from ${params.fileName}: Patient visit summary and medical report.`;
+}
+
+/* Backend Patient Registration Tool Call - creates a new patient record.
+   Called only from submitNewPatientRegistration() on the sign-up panel. */
+/* Backend Patient Registration Tool Call - creates a new patient record.
+   Called only from submitNewPatientRegistration() on the sign-up panel.
+   Written as async so the real implementation can be a plain fetch()
+   to your API with no change to any caller. Never log params.password
+   verbatim — only the email is logged here, on purpose. */
+async function register_patient(params) {
+  console.log('[BACKEND CALL] Calling register_patient for:', params.email);
+  // TODO(backend): replace with e.g.
+  //   const res = await fetch('/api/patients/register', { method: 'POST', body: JSON.stringify(params) });
+  //   return await res.json();
+  return { patientId: 'PT-' + Math.floor(100000 + Math.random() * 900000), success: true };
+}
+
+/* Backend Login Tool Call - verifies credentials (password or biometric)
+   for an existing patient. Called from submitExistingLogin() and
+   triggerFingerprintAuth(). Never log params.password verbatim. */
+async function login_patient(params) {
+  console.log('[BACKEND CALL] Calling login_patient with method:', params.method, params.email ? `for: ${params.email}` : '');
+  // TODO(backend): replace with e.g.
+  //   const res = await fetch('/api/patients/login', { method: 'POST', body: JSON.stringify(params) });
+  //   return await res.json();
+  return { success: true, patientId: 'PT-000001' };
+}
+
+/* Backend Department Routing Tool Call - this is a thin wrapper around
+   the existing symptom -> department RAG pipeline. It only forwards the
+   patient's own words; all triage/classification logic lives server-side. */
+function determine_department_tool(params) {
+  console.log('[BACKEND CALL] Calling determine_department_tool with symptoms:', params.symptoms, 'language:', params.language);
+  return { department: 'Primary Care', doctor: 'Dr. Alana Reyes', when: 'Tomorrow · 10:00 AM' };
+}
+
+/* ==================================================================
+   CHAT ENGINE & CONVERSATIONAL FLOW
+=================================================================== */
+const chatLog = document.getElementById('chat-log');
+
+function initAssistantChat() {
+  chatLog.innerHTML = '';
+  addBotMessage(`Hello! I'm your Cove Assistant. How can I help you today? You can book, reschedule, or ask questions in ${patientState.languageLabel}.`);
+}
+
+function addUserMessage(text) {
+  const div = document.createElement('div');
+  div.className = 'bubble-row from-user';
+  div.innerHTML = `
+    <div class="avatar">U</div>
+    <div class="bubble-col">
+      <div class="bubble"><div class="bubble-text">${escapeHtml(text)}</div></div>
+      <div class="bubble-meta">
+        <button class="audio-btn" onclick="tts_tool({text: '${escapeHtml(text)}', language: patientState.language})">🔊 Listen</button>
+      </div>
+    </div>
+  `;
+  chatLog.appendChild(div);
+  chatLog.scrollTop = chatLog.scrollHeight;
+}
+
+function addBotMessage(text, extraHtml = '') {
+  const div = document.createElement('div');
+  div.className = 'bubble-row from-bot';
+  div.innerHTML = `
+    <div class="avatar">🌊</div>
+    <div class="bubble-col">
+      <div class="bubble">
+        <div class="bubble-text">${text}</div>
+        ${extraHtml ? `<div class="bubble-extra">${extraHtml}</div>` : ''}
+      </div>
+      <div class="bubble-meta">
+        <button class="audio-btn" onclick="tts_tool({text: '${escapeHtml(text)}', language: patientState.language})">🔊 Listen</button>
+      </div>
+    </div>
+  `;
+  chatLog.appendChild(div);
+  chatLog.scrollTop = chatLog.scrollHeight;
+}
+
+/* Send user text message handler */
+function sendTextMessage() {
+  const input = document.getElementById('chat-input');
+  const text = input.value.trim();
+  if(!text) return;
+  input.value = '';
+
+  addUserMessage(text);
+  processIncomingUserIntent(text);
+}
+
+/* Suggested-question chips (above the composer) feed straight into
+   the same pipeline as typed text — tap one and it's sent exactly
+   as if the patient had typed and hit send. */
+function askSuggested(text) {
+  addUserMessage(text);
+  processIncomingUserIntent(text);
+}
+
+/* Process incoming intent and trigger MCQ questions when booking/canceling/rescheduling */
+function processIncomingUserIntent(text) {
+  // Emergency check — runs before anything else, including symptom
+  // collection below, since a red-flag phrase always wins.
+  if (/\b(chest pain|bleeding|emergency|cannot breathe)\b/i.test(text)) {
+    goToEmergencyScreen(`Emergency keyword detected in user message: "${text}"`);
+    return;
+  }
+
+  // If we're mid-booking and waiting on the patient's symptoms, this
+  // message IS the answer to that question — capture it and move on
+  // to fulfillment rather than re-parsing it as a fresh intent.
+  if (patientState.awaitingSymptoms) {
+    handleSymptomResponse(text);
+    return;
+  }
+
+  // Check if user is hinting at booking, canceling, or rescheduling
+  const isAppointmentHint = /\b(book|appointment|schedule|reschedule|cancel|see doctor)\b/i.test(text);
+
+  if (isAppointmentHint) {
+    patientState.pendingAppointmentAction = text;
+
+    // RULE: If new patient status is unknown, ask MCQ "Are you a new patient?" in main chat
+    if (patientState.isNewPatient === null) {
+      askNewPatientMCQ();
+      return;
+    }
+
+    // RULE: If existing patient, but visitType is unknown, ask MCQ "Is this a follow up or new visit?"
+    if (patientState.isNewPatient === false && patientState.visitType === null) {
+      askVisitTypeMCQ();
+      return;
+    }
+
+    continueBookingFlow();
+  } else {
+    // Normal query response
+    setTimeout(() => {
+      addBotMessage("I can assist you with that. Would you like to schedule an appointment or view hospital guidelines?");
+    }, 500);
+  }
+}
+
+/* MULTIPLE CHOICE QUESTION: "Are you a new patient?" */
+function askNewPatientMCQ() {
+  const mcqHtml = `
+    <div class="msg-options">
+      <button class="choice-card" onclick="handleNewPatientMCQResponse(true)">🌱 Yes, I am a new patient</button>
+      <button class="choice-card" onclick="handleNewPatientMCQResponse(false)">🔁 No, I am an existing patient</button>
+    </div>
+  `;
+  setTimeout(() => {
+    addBotMessage("To proceed with your request, I need to know your patient status.", mcqHtml);
+  }, 400);
+}
+
+function handleNewPatientMCQResponse(isNew) {
+  patientState.isNewPatient = isNew;
+  document.getElementById('prof-status').value = isNew ? 'New Patient' : 'Existing Patient';
+  addUserMessage(isNew ? "I am a new patient." : "I am an existing patient.");
+
+  if (!isNew) {
+    // "If they say they're an existing patient, immediately ask if it's new or old patient."
+    askVisitTypeMCQ();
+  } else {
+    continueBookingFlow();
+  }
+}
+
+/* MULTIPLE CHOICE QUESTION: "Is this a follow up or new visit?" */
+function askVisitTypeMCQ() {
+  const mcqHtml = `
+    <div class="msg-options">
+      <button class="choice-card" onclick="handleVisitTypeMCQResponse('followup')">📋 Follow-up visit</button>
+      <button class="choice-card" onclick="handleVisitTypeMCQResponse('new')">🆕 New visit</button>
+    </div>
+  `;
+  setTimeout(() => {
+    addBotMessage("Since you are an existing patient, please clarify your visit type:", mcqHtml);
+  }, 400);
+}
+
+function handleVisitTypeMCQResponse(type) {
+  patientState.visitType = type;
+  document.getElementById('prof-visit-type').value = type === 'followup' ? 'Follow-up Visit' : 'New Visit';
+  addUserMessage(type === 'followup' ? "This is a follow-up visit." : "This is a new visit.");
+  continueBookingFlow();
+}
+
+/* Single gate that every booking path (fresh intent + both MCQ
+   responses) funnels through before the appointment card is built.
+   Keeping this logic in one place is what guarantees the symptom
+   question actually fires — earlier, the two MCQ handlers above
+   called fulfillAppointmentRequest() directly and skipped it. */
+function continueBookingFlow() {
+  if (patientState.symptoms === null) {
+    askSymptomQuestion();
+    return;
+  }
+  fulfillAppointmentRequest();
+}
+
+/* Free-text question: what brings the patient in today. This is the
+   piece of information the backend RAG pipeline needs to sort the
+   patient into the right department, so it's asked for every booking
+   before we call determine_department_tool(). */
+function askSymptomQuestion() {
+  patientState.awaitingSymptoms = true;
+  setTimeout(() => {
+    addBotMessage("Before I lock in a department, what symptoms or reason for visit should I pass along? A sentence or two is perfect.");
+  }, 400);
+}
+
+function handleSymptomResponse(text) {
+  patientState.symptoms = text;
+  patientState.awaitingSymptoms = false;
+  fulfillAppointmentRequest();
+}
+
+function fulfillAppointmentRequest() {
+  setTimeout(() => {
+    // Calls backend determine_department_tool with the patient's own
+    // words — the actual symptom -> department classification happens
+    // in the existing backend RAG pipeline, not here.
+    const routed = determine_department_tool({
+      symptoms: patientState.symptoms,
+      language: patientState.language
+    });
+
+    addBotMessage("Great — here's what I've got lined up. Please confirm the details are correct before it's officially booked.", `
+      <div class="appointment-card">
+        <span class="eyebrow">Proposed appointment</span>
+        <dl>
+          <dt>Doctor</dt><dd>${escapeHtml(routed.doctor)}</dd>
+          <dt>Department</dt><dd>${escapeHtml(routed.department)}</dd>
+          <dt>When</dt><dd>${escapeHtml(routed.when)}</dd>
+        </dl>
+      </div>
+      <div class="msg-options">
+        <button class="btn btn-primary btn-block" onclick="showScreen('screen-confirmation')">✅ Confirm &amp; book appointment</button>
+      </div>
+    `);
+  }, 500);
+}
+
+/* ==================================================================
+   FILE UPLOADS & OCR INTEGRATION
+=================================================================== */
+function triggerFileInput() {
+  document.getElementById('ocr-file-input').click();
+}
+
+function handleOcrFileUpload(event) {
+  const file = event.target.files[0];
+  if(!file) return;
+
+  // Increments translated_doc_count properly
+  patientState.translated_doc_count++;
+  document.getElementById('prof-docs').value = patientState.translated_doc_count;
+
+  addUserMessage(`[Uploaded Document: ${file.name}]`);
+
+  // Calls backend ocr_tool with translated_doc_count parameter
+  const ocrText = ocr_tool({
+    fileName: file.name,
+    translated_doc_count: patientState.translated_doc_count
+  });
+
+  setTimeout(() => {
+    addBotMessage(`I've processed your document (Document #${patientState.translated_doc_count}).`, `
+      <div style="background:var(--bg-deep); padding:12px 14px; border-radius:var(--radius-sm); font-size:13px; text-align:left;">
+        <strong>Extracted summary:</strong> ${ocrText}
+      </div>
+    `);
+  }, 600);
+}
+
+/* Voice recording toggle with sound click feedback */
+function toggleVoiceInputRecording() {
+  playAudioClickCue();
+  const btn = document.getElementById('mic-btn');
+  btn.classList.add('is-recording');
+
+  setTimeout(() => {
+    btn.classList.remove('is-recording');
+    const transcribedText = transcription_tool(null);
+    addUserMessage(transcribedText);
+    processIncomingUserIntent(transcribedText);
+  }, 1500);
+}
+
+/* ==================================================================
+   EMERGENCY PAGE DISPLAY
+=================================================================== */
+function goToEmergencyScreen(reason) {
+  document.getElementById('emergency-output-text').textContent = "Emergency protocol triggered: Urgent attention required.";
+  document.getElementById('emergency-reason-text').textContent = reason;
+  showScreen('screen-emergency');
+}
+
+/* ==================================================================
+   PDF GENERATION (RAW JS PDF CREATOR)
+   Generates a downloadable PDF of confirmed appointment details.
+=================================================================== */
+function generateAppointmentPDF() {
+  const doctor = "Dr. Alana Reyes";
+  const date = "Tomorrow at 10:00 AM";
+  const code = "COVE-8842";
+  const name = document.getElementById('prof-name').value || "Jane Doe";
+
+  // Pure JS PDF generator using formatted PDF stream syntax
+  const pdfString = `%PDF-1.4
+1 0 obj <</Type /Catalog /Pages 2 0 R>> endobj
+2 0 obj <</Type /Pages /Kids [3 0 R] /Count 1>> endobj
+3 0 obj <</Type /Page /Parent 2 0 R /Resources << /Font << /F1 4 0 R >> >> /MediaBox [0 0 612 792] /Contents 5 0 R>> endobj
+4 0 obj <</Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold>> endobj
+5 0 obj <</Length 280>> stream
+BT
+/F1 18 Tf
+50 720 TD
+(COVE HOSPITAL - APPOINTMENT CONFIRMATION) Tj
+/F1 12 Tf
+0 -30 TD
+(Patient Name: ${name}) Tj
+0 -20 TD
+(Doctor: ${doctor}) Tj
+0 -20 TD
+(Date & Time: ${date}) Tj
+0 -20 TD
+(Confirmation Code: ${code}) Tj
+0 -30 TD
+(Thank you for choosing Cove Healthcare.) Tj
+ET
+endstream endobj
+xref
+0 6
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000230 00000 n 
+0000000307 00000 n 
+trailer <</Size 6 /Root 1 0 R>>
+startxref
+638
+%%EOF`;
+
+  const blob = new Blob([pdfString], { type: 'application/pdf' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `Appointment_Confirmation_${code}.pdf`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+/* Helper string escaper */
+function escapeHtml(str) {
+  return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+</script>
+</body>
+</html>
