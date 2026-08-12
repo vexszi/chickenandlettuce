@@ -5,8 +5,9 @@ from dotenv import load_dotenv
 from state import HospitalState
 from schemas import IntentAndExtraction
 from tools import translate_incoming_tool, translate_outgoing_tool
-from pii_masking import pii_masking_node
 from policy import retrieve
+from book import (_patient_type, _init_checklist, _handle_followup, _handle_new_or_returning, _upcoming_appointments, confirm_booking, find_available_slots)
+from auth import delete_appointment
 
 
 load_dotenv()
@@ -211,9 +212,13 @@ def final_response_node(state: HospitalState) -> dict:
 # Calls: save_appointment and book.py
 # ----------------------------------------------------------------------------
 def book_appointment(state: HospitalState) -> dict:
-    # Placeholder for booking logic
-    return {"status": "complete", "output_text": "Appointment booked successfully."}
+    patient_type = _patient_type(state)
+    checklist = _init_checklist(state)
 
+    if patient_type == "old_followup":
+        return _handle_followup(state, checklist)
+
+    return _handle_new_or_returning(state, checklist, patient_type)
 
 
 # ----------------------------------------------------------------------------
@@ -221,16 +226,117 @@ def book_appointment(state: HospitalState) -> dict:
 # Calls: get_appointments and cancel_appointment
 # ----------------------------------------------------------------------------
 def cancel_appointment(state: HospitalState) -> dict:
-    # Placeholder for cancellation logic
-    return {"status": "complete", "output_text": "Appointment cancelled successfully."}
+    patient_id = state.get("patient_id")
+    if not patient_id:
+        return {
+            "output_text": "You'll need to log in first before cancelling an appointment.",
+            "status": "blocked",
+        }
+
+    appointment_id = state.get("existing_appointment_id")
+
+    # Step 1: no selection yet -- show them what they have
+    if not appointment_id:
+        upcoming = _upcoming_appointments(patient_id)
+        if not upcoming:
+            return {
+                "output_text": "You don't have any upcoming appointments to cancel.",
+                "status": "complete",
+            }
+        return {
+            "available_appointments": upcoming,   # frontend renders these as buttons
+            "status": "awaiting_input",
+        }
+
+    # Step 2: they picked one -- cancel it
+    deleted = delete_appointment(patient_id, appointment_id)
+    if not deleted:
+        return {
+            "output_text": "I couldn't find that appointment -- it may have already been cancelled.",
+            "status": "complete",
+        }
+
+    return {
+        "output_text": (
+            f"Your appointment with {deleted['doctor']} on {deleted['date']} "
+            f"has been cancelled."
+        ),
+        "status": "complete",
+    }
 
 
 
 # ----------------------------------------------------------------------------
 # Reschedule Appointment
-# Calls: book_appointment and cancel_appointment
+# Calls: functions from book_appointment and cancel_appointment
 # ----------------------------------------------------------------------------
 def reschedule_appointment(state: HospitalState) -> dict:
+    patient_id = state.get("patient_id")
+    if not patient_id:
+        return {
+            "output_text": "You'll need to log in first before rescheduling an appointment.",
+            "status": "blocked",
+        }
+    appointment_id = state.get("existing_appointment_id")
 
-    return {"status": "complete", "output_text": "Appointment cancelled successfully."}
+    if not appointment_id:
+            upcoming = _upcoming_appointments(patient_id)
+            if not upcoming:
+                return {
+                    "output_text": "You don't have any upcoming appointments to reschedule.",
+                    "status": "complete",
+                }
+            return {
+                "available_appointments": upcoming,   # frontend renders these as buttons
+                "status": "awaiting_input",
+            }
 
+    available = state.get("available_slots")
+    if not available:
+        available = find_available_slots(state)
+        return {
+            "available_slots": available,
+            "status": "awaiting_input",
+        }
+
+    selected_slot = state.get("selected_slot")
+    if not selected_slot:
+        return {
+                    "output_text": "Please select a slot.",
+                    "status": "awaiting_input",
+                }
+    confirmation = confirm_booking(state)
+    new_appt = confirmation["confirmed_appointment"]["appointment_id"]
+    
+    deleted = delete_appointment(patient_id, appointment_id)
+    if not deleted:
+        return {
+            "output_text": "I couldn't find the appointment to cancel--it may already have been cancelled.",
+            "status": "complete",
+        }
+    
+    return {
+        "output_text": (
+            f"Your appointment with {deleted['doctor']} on {deleted['date']} "
+            f"has been rescheduled."
+        ),
+        "status": "complete",
+        "held_appointment_id": new_appt
+    }
+    
+
+    return {"status": "complete", "output_text": "Appointment rescheduled successfully.", "existing_appointment_id": "existing_appointment_id"}
+
+
+#   department: Optional[str]
+#     requested_doctor_name: Optional[str]   # was doctor_preference -- now ONLY a specifically named doctor request
+#     booking_checklist: dict[str, bool]
+
+#     existing_appointment_id: Optional[str]   #appointment currently being cancelled or rescheduled
+#     held_appointment_id: Optional[str]     #new slot for rescheduling
+
+#     available_slots: list[dict]
+#     selected_slot: Optional[dict]
+#     confirmed_appointment: Optional[dict]
+#     new_account_password: Optional[str]
+#     available_appointments: list[dict]

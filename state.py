@@ -75,9 +75,8 @@ class HospitalState(TypedDict):
     available_slots: list[dict]
     selected_slot: Optional[dict]
     confirmed_appointment: Optional[dict]
-
-    wants_to_register: Optional[bool]
     new_account_password: Optional[str]
+    available_appointments: list[dict]
 
     # --- output ---
     output_text: str

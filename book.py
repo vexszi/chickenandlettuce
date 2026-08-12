@@ -1,13 +1,14 @@
 import os
 import json
 from google import genai
-import secrets
 from datetime import datetime, timedelta
 
 from state import HospitalState
 from auth import save_appointment
 from auth import get_doctor_appointments
 from mcp_server.server import send_confirmation_email
+from auth import register_patient
+from auth import get_appointments
 
 DAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
 
@@ -115,6 +116,8 @@ def _handle_new_or_returning(state: HospitalState, checklist: dict, patient_type
             pii_missing.append("email address")
         if not info.get("insurance_provider") or not info.get("insurance_id"):
             pii_missing.append("insurance information")
+        if not state.get("new_account_password"):
+            pii_missing.append("a password for your account")
 
         checklist["pii_collection"] = len(pii_missing) == 0
         missing += pii_missing
@@ -173,20 +176,6 @@ def _handle_new_or_returning(state: HospitalState, checklist: dict, patient_type
 
 
 
-
-# ---------------------------------------------------------------------------
-# MAIN ENTRY POINT -- this is what nodes.py's book_appointment node calls.
-# ---------------------------------------------------------------------------
-def book_appointment_flow(state: HospitalState) -> dict:
-    patient_type = _patient_type(state)
-    checklist = _init_checklist(state)
-
-    if patient_type == "old_followup":
-        return _handle_followup(state, checklist)
-
-    return _handle_new_or_returning(state, checklist, patient_type)
-
-
 # ---------------------------------------------------------------------------
 # Automatic step, no human input: picks a department from symptoms.
 # ---------------------------------------------------------------------------
@@ -219,10 +208,6 @@ def _decide_department(state: HospitalState) -> dict:
     return {"department": result.get("department")}
 
 
-# ---------------------------------------------------------------------------
-# PLACEHOLDERS -- called from _handle_new_or_returning above, but not
-# built yet. Will raise an error if the flow actually reaches them.
-# ---------------------------------------------------------------------------
 def find_available_slots(state: HospitalState) -> list[dict]:
     with open("doctors.json") as f:
         doctors = json.load(f)
@@ -306,7 +291,11 @@ def confirm_booking(state: HospitalState) -> dict:
 
     patient_id = state.get("patient_id")
     if not patient_id:
-        patient_id = f"p_{secrets.token_hex(4)}"
+        patient_id = register_patient(
+            email=patient_info.get("email"),
+            password=state.get("new_account_password"),
+            name=patient_info.get("name"),
+        )
 
     full_datetime = f"{slot['date']} {slot['time']}"
 
@@ -353,3 +342,16 @@ def confirm_booking(state: HospitalState) -> dict:
     "output_text": message,
     "status": "complete",
 }
+
+
+#-------------------------------------------------------------------------------------------------------------------------------
+# ----------------------------------------------------------CANCEL--------------------------------------------------------------
+#-------------------------------------------------------------------------------------------------------------------------------
+def _upcoming_appointments(patient_id: str) -> list[dict]:
+    """Returns this patient's appointments that haven't happened yet."""
+    all_appts = get_appointments(patient_id)
+    now = datetime.now()
+    return [
+        appt for appt in all_appts
+        if datetime.strptime(appt["date"], "%Y-%m-%d %H:%M") > now
+    ]
