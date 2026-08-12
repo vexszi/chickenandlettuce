@@ -63,7 +63,7 @@ def _ask_for(missing: list[str]) -> str:
     - Do NOT mention or ask about anything not in the list above.
     - Return ONLY the message.
     """
-    response = client.models.generate_content(model="gemini-flash-latest", contents=prompt)
+    response = client.models.generate_content(model="gemini-3.5-flash", contents=prompt)
     return response.text.strip()
 
 
@@ -71,14 +71,23 @@ def _ask_for(missing: list[str]) -> str:
 # Handles the "old patient, follow-up" flow -- just 2 things to check.
 # ---------------------------------------------------------------------------
 def _handle_followup(state: HospitalState, checklist: dict) -> dict:
-    missing = []
-
-    if state.get("existing_appointment_id"):
-        checklist["which_appointment"] = True
-    else:
+    if not state.get("existing_appointment_id"):
         checklist["which_appointment"] = False
-        missing.append("which past appointment you're following up on")
+        upcoming = _upcoming_appointments(state.get("patient_id"))
+        if not upcoming:
+            return {
+                "output_text": "I don't see any past appointments to follow up on.",
+                "booking_checklist": checklist,
+                "status": "complete",
+            }
+        return {
+            "available_appointments": upcoming,
+            "booking_checklist": checklist,
+            "status": "awaiting_input",
+        }
+    checklist["which_appointment"] = True
 
+    missing = []
     if state.get("symptoms") is not None:
         checklist["new_symptoms"] = True
     else:
@@ -142,11 +151,7 @@ def _handle_new_or_returning(state: HospitalState, checklist: dict, patient_type
     if not checklist["department"]:
         decision = _decide_department(state)
         checklist["department"] = True
-        return {
-            **decision,
-            "booking_checklist": checklist,
-            "status": "in_progress",
-        }
+        state = {**state, **decision}   # so Step 4 below can see the new department
 
     # Step 4: find open slots across the candidate doctors
     if not state.get("available_slots"):
@@ -154,15 +159,17 @@ def _handle_new_or_returning(state: HospitalState, checklist: dict, patient_type
         if not slots:
             return {
                 "output_text": "Sorry, no doctors are available for your criteria right now. Please call our front desk directly.",
+                "department": state.get("department"),
                 "booking_checklist": checklist,
                 "status": "complete",
             }
         return {
             "available_slots": slots,
+            "department": state.get("department"),
             "booking_checklist": checklist,
             "status": "awaiting_input",
         }
-
+    
     # Step 5: waiting on patient to actually pick a slot
     if not state.get("selected_slot"):
         return {"booking_checklist": checklist, "status": "awaiting_input"}
@@ -203,7 +210,7 @@ def _decide_department(state: HospitalState) -> dict:
     Return ONLY JSON in this shape:
     {{"department": ""}}
     """
-    response = client.models.generate_content(model="gemini-flash-latest", contents=prompt)
+    response = client.models.generate_content(model="gemini-3.5-flash", contents=prompt)
     result = json.loads(response.text.strip())
     return {"department": result.get("department")}
 
@@ -343,6 +350,14 @@ def confirm_booking(state: HospitalState) -> dict:
     "status": "complete",
 }
 
+def book_appointment_flow(state: HospitalState) -> dict:
+    patient_type = _patient_type(state)
+    checklist = _init_checklist(state)
+
+    if patient_type == "old_followup":
+        return _handle_followup(state, checklist)
+
+    return _handle_new_or_returning(state, checklist, patient_type)
 
 #-------------------------------------------------------------------------------------------------------------------------------
 # ----------------------------------------------------------CANCEL--------------------------------------------------------------

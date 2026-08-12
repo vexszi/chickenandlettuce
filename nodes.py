@@ -6,7 +6,7 @@ from state import HospitalState
 from schemas import IntentAndExtraction
 from tools import translate_incoming_tool, translate_outgoing_tool
 from policy import retrieve
-from book import (_patient_type, _init_checklist, _handle_followup, _handle_new_or_returning, _upcoming_appointments, confirm_booking, find_available_slots)
+from book import (book_appointment_flow,_upcoming_appointments, confirm_booking, find_available_slots,get_appointments)
 from auth import delete_appointment
 
 
@@ -61,7 +61,7 @@ def intent_guardrail_extraction_node(state: HospitalState) -> dict:
     text = state.get("masked_text", "")
 
     response = client.models.generate_content(
-        model="gemini-flash-latest",
+        model="gemini-3.5-flash",
         contents=f"{SYSTEM_PROMPT}\n\nPatient message:\n{text}",
         config={
             "response_mime_type": "application/json",
@@ -135,7 +135,7 @@ def document_explainer_node(state: HospitalState) -> dict:
     {patient_question if patient_question else "(No specific question -- give a general explanation of the document.)"}"""
 
     response = client.models.generate_content(
-        model="gemini-flash-latest",
+        model="gemini-3.5-flash",
         contents=prompt,
     )
 
@@ -172,7 +172,7 @@ def hospital_policy(state: HospitalState) -> dict:
     """
 
   response = client.models.generate_content(
-    model="gemini-flash-latest",
+    model="gemini-3.5-flash",
     contents=prompt,
 )
   return {
@@ -189,7 +189,7 @@ def hospital_policy(state: HospitalState) -> dict:
 # ---------------------------------------------------------------------------
 def other_intent_node(state: HospitalState) -> dict:
     response = client.models.generate_content(
-        model="gemini-flash-latest",
+        model="gemini-3.5-flash",
         contents=(
             "You are a hospital front desk assistant. Respond helpfully and "
             "briefly to this message, and if relevant, remind the patient "
@@ -212,13 +212,17 @@ def final_response_node(state: HospitalState) -> dict:
 # Calls: save_appointment and book.py
 # ----------------------------------------------------------------------------
 def book_appointment(state: HospitalState) -> dict:
-    patient_type = _patient_type(state)
-    checklist = _init_checklist(state)
+    updates = {}
+    working_state = {**state}
 
-    if patient_type == "old_followup":
-        return _handle_followup(state, checklist)
+    while True:
+        result = book_appointment_flow(working_state)
+        updates.update(result)
+        working_state.update(result)
+        if result.get("status") != "in_progress":
+            break
 
-    return _handle_new_or_returning(state, checklist, patient_type)
+    return updates
 
 
 # ----------------------------------------------------------------------------
@@ -291,11 +295,34 @@ def reschedule_appointment(state: HospitalState) -> dict:
                 "status": "awaiting_input",
             }
 
+    old_department = state.get("department")
+    old_doctor = state.get("requested_doctor_name")
+    if not old_department or not old_doctor:
+        matching = next(
+            (a for a in get_appointments(patient_id)
+            if a["appointment_id"] == appointment_id),
+            None,
+        )
+        if matching:
+            old_department = matching["department"]
+            old_doctor = matching["doctor"]
+
+    state = {**state, "department": old_department, "requested_doctor_name": old_doctor}
+
     available = state.get("available_slots")
     if not available:
         available = find_available_slots(state)
+        if not available:
+            return {
+                "output_text": "Sorry, your doctor has no available slots right now. Please call our front desk directly.",
+                "department": old_department,
+                "requested_doctor_name": old_doctor,
+                "status": "complete",
+            }
         return {
             "available_slots": available,
+            "department": old_department,
+            "requested_doctor_name": old_doctor,
             "status": "awaiting_input",
         }
 
@@ -323,20 +350,3 @@ def reschedule_appointment(state: HospitalState) -> dict:
         "status": "complete",
         "held_appointment_id": new_appt
     }
-    
-
-    return {"status": "complete", "output_text": "Appointment rescheduled successfully.", "existing_appointment_id": "existing_appointment_id"}
-
-
-#   department: Optional[str]
-#     requested_doctor_name: Optional[str]   # was doctor_preference -- now ONLY a specifically named doctor request
-#     booking_checklist: dict[str, bool]
-
-#     existing_appointment_id: Optional[str]   #appointment currently being cancelled or rescheduled
-#     held_appointment_id: Optional[str]     #new slot for rescheduling
-
-#     available_slots: list[dict]
-#     selected_slot: Optional[dict]
-#     confirmed_appointment: Optional[dict]
-#     new_account_password: Optional[str]
-#     available_appointments: list[dict]
