@@ -18,6 +18,9 @@ fastmcp
 google-auth
 google-auth-oauthlib
 google-api-python-client
+fastapi
+uvicorn
+gcloud auth application-default login
 
 
 # pip install -r requirements.txt

@@ -745,9 +745,9 @@ p.lede { color: var(--ink-soft); font-size: 15px; line-height: 1.6; max-width: 4
           <p class="quick-actions-label">Quick start</p>
           <div class="quick-actions" id="quick-actions">
             <button class="quick-chip" onclick="askSuggested('I need to book an appointment')">📅 Book an appointment</button>
-            <button class="quick-chip" onclick="askSuggested('What are your visiting hours?')">🕐 Visiting hours</button>
+            <button class="quick-chip" onclick="askSuggested('What are your visiting hours?')">🕐 Hospital Policies</button>
             <button class="quick-chip" onclick="askSuggested('Can you help me understand a document?')">📄 Explain a document</button>
-            <button class="quick-chip" onclick="askSuggested('What insurance plans do you accept?')">💳 Insurance</button>
+            <button class="quick-chip" onclick="askSuggested('What insurance plans do you accept?')">💳 Cancel</button>
             <button class="quick-chip" onclick="askSuggested('I need to reschedule my appointment')">🔁 Reschedule</button>
           </div>
         </div>
@@ -1253,9 +1253,10 @@ function hideLoginError() {
 
 /* Shared "successful login" side effects, whether the patient got in
    via password or fingerprint. */
-function completeLogin(isNewPatient) {
+function completeLogin(isNewPatient, patientId) {
   patientState.isLoggedIn = true;
   patientState.isNewPatient = isNewPatient;
+  patientState.patientId = patientId;   // <-- new
   document.getElementById('prof-status').value = isNewPatient ? 'New Patient' : 'Existing Patient';
   closeLoginModal();
   addBotMessage(isNewPatient
@@ -1375,22 +1376,33 @@ function ocr_tool(params) {
    to your API with no change to any caller. Never log params.password
    verbatim — only the email is logged here, on purpose. */
 async function register_patient(params) {
-  console.log('[BACKEND CALL] Calling register_patient for:', params.email);
-  // TODO(backend): replace with e.g.
-  //   const res = await fetch('/api/patients/register', { method: 'POST', body: JSON.stringify(params) });
-  //   return await res.json();
-  return { patientId: 'PT-' + Math.floor(100000 + Math.random() * 900000), success: true };
+  const res = await fetch('http://localhost:8000/api/patients/register', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      name: params.name,
+      email: params.email,
+      password: params.password,
+    }),
+  });
+  const data = await res.json();
+  return { patientId: data.patientId, success: data.success, reason: data.reason };
 }
 
 /* Backend Login Tool Call - verifies credentials (password or biometric)
    for an existing patient. Called from submitExistingLogin() and
    triggerFingerprintAuth(). Never log params.password verbatim. */
 async function login_patient(params) {
-  console.log('[BACKEND CALL] Calling login_patient with method:', params.method, params.email ? `for: ${params.email}` : '');
-  // TODO(backend): replace with e.g.
-  //   const res = await fetch('/api/patients/login', { method: 'POST', body: JSON.stringify(params) });
-  //   return await res.json();
-  return { success: true, patientId: 'PT-000001' };
+  const res = await fetch('http://localhost:8000/api/patients/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      email: params.email,
+      password: params.password,
+    }),
+  });
+  const data = await res.json();
+  return { patientId: data.patientId, success: data.success, reason: data.reason };
 }
 
 /* Backend Department Routing Tool Call - this is a thin wrapper around
@@ -1466,47 +1478,66 @@ function askSuggested(text) {
 }
 
 /* Process incoming intent and trigger MCQ questions when booking/canceling/rescheduling */
-function processIncomingUserIntent(text) {
-  // Emergency check — runs before anything else, including symptom
-  // collection below, since a red-flag phrase always wins.
-  if (/\b(chest pain|bleeding|emergency|cannot breathe)\b/i.test(text)) {
-    goToEmergencyScreen(`Emergency keyword detected in user message: "${text}"`);
-    return;
-  }
+async function processIncomingUserIntent(text) {
+  const payload = {
+    thread_id: 'session-1',   // fine as a constant for a single-patient demo
+    message: text,
+  };
 
-  // If we're mid-booking and waiting on the patient's symptoms, this
-  // message IS the answer to that question — capture it and move on
-  // to fulfillment rather than re-parsing it as a fresh intent.
-  if (patientState.awaitingSymptoms) {
-    handleSymptomResponse(text);
-    return;
-  }
+  if (patientState.isLoggedIn) payload.patient_id = patientState.patientId;
+  if (patientState.isNewPatient !== null) payload.is_first_time = patientState.isNewPatient;
+  if (patientState.visitType !== null) payload.old_patient_follow_up = (patientState.visitType === 'followup');
 
-  // Check if user is hinting at booking, canceling, or rescheduling
-  const isAppointmentHint = /\b(book|appointment|schedule|reschedule|cancel|see doctor)\b/i.test(text);
+  const res = await fetch('http://localhost:8000/api/chat/message', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  const data = await res.json();
 
-  if (isAppointmentHint) {
-    patientState.pendingAppointmentAction = text;
+  renderAssistantReply(data);
+}
 
-    // RULE: If new patient status is unknown, ask MCQ "Are you a new patient?" in main chat
-    if (patientState.isNewPatient === null) {
-      askNewPatientMCQ();
-      return;
-    }
-
-    // RULE: If existing patient, but visitType is unknown, ask MCQ "Is this a follow up or new visit?"
-    if (patientState.isNewPatient === false && patientState.visitType === null) {
-      askVisitTypeMCQ();
-      return;
-    }
-
-    continueBookingFlow();
+function renderAssistantReply(data) {
+  if (data.available_slots && data.available_slots.length > 0) {
+    const buttonsHtml = `<div class="msg-options">` +
+      data.available_slots.map(slot => `
+        <button class="choice-card" onclick='selectSlot(${JSON.stringify(slot)})'>
+          ${slot.doctor} — ${slot.date} at ${slot.time}
+        </button>`).join('') +
+      `</div>`;
+    addBotMessage(data.output_text, buttonsHtml);
+  } else if (data.available_appointments && data.available_appointments.length > 0) {
+    const buttonsHtml = `<div class="msg-options">` +
+      data.available_appointments.map(appt => `
+        <button class="choice-card" onclick="selectAppointment('${appt.appointment_id}')">
+          ${appt.doctor} — ${appt.date}
+        </button>`).join('') +
+      `</div>`;
+    addBotMessage(data.output_text, buttonsHtml);
   } else {
-    // Normal query response
-    setTimeout(() => {
-      addBotMessage("I can assist you with that. Would you like to schedule an appointment or view hospital guidelines?");
-    }, 500);
+    addBotMessage(data.output_text);
   }
+}
+
+async function selectSlot(slot) {
+  addUserMessage(`${slot.doctor} on ${slot.date} at ${slot.time}`);
+  const res = await fetch('http://localhost:8000/api/chat/message', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ thread_id: 'session-1', message: '', selected_slot: slot }),
+  });
+  renderAssistantReply(await res.json());
+}
+
+async function selectAppointment(appointmentId) {
+  addUserMessage('Selected that appointment.');
+  const res = await fetch('http://localhost:8000/api/chat/message', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ thread_id: 'session-1', message: '', existing_appointment_id: appointmentId }),
+  });
+  renderAssistantReply(await res.json());
 }
 
 /* MULTIPLE CHOICE QUESTION: "Are you a new patient?" */
