@@ -118,6 +118,7 @@ def api_chat(req: ChatRequest):
         "status": result.get("status"),
         "available_slots": result.get("available_slots"),
         "available_appointments": result.get("available_appointments"),
+        "needs_password": result.get("needs_password", False),
     }
 
 

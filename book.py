@@ -186,9 +186,19 @@ def _handle_new_or_returning(state: HospitalState, checklist: dict, patient_type
             "status": "awaiting_input",
         }
     
-    # Step 5: waiting on patient to actually pick a slot
+        # Step 5: waiting on patient to actually pick a slot
     if not state.get("selected_slot"):
         return {"booking_checklist": checklist, "status": "awaiting_input"}
+
+    # Step 5.5: a brand-new patient (no patient_id yet) needs a password
+    # before we can create their account.
+    if not state.get("patient_id") and not state.get("new_account_password"):
+        return {
+            "booking_checklist": checklist,
+            "output_text": "Almost done! Since this will be your first visit with us, please create a password to set up your account.",
+            "status": "awaiting_input",
+            "needs_password": True,
+        }
 
     # Step 6: confirm + save the booking
     if not state.get("confirmed_appointment"):
