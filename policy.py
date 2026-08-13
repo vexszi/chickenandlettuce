@@ -60,21 +60,34 @@ def _cosine_similarity(a: np.ndarray, b: np.ndarray) -> np.ndarray:
     return b_norm @ a_norm
 
 
+_index_cache: dict = {}   # lazily populated, kept in memory for the life of the process
+
+
+def _load_index() -> tuple:
+    """Loads (and caches) the embedding index + chunk text. Previously this
+    hit disk on every single call to retrieve() -- for a static policy
+    index that never changes at runtime, that's a wasted file read +
+    numpy parse on every hospital-policy question. Now it's read once."""
+    if "embeddings" not in _index_cache:
+        if not os.path.exists(INDEX_FILE):
+            raise FileNotFoundError(
+                "No RAG index found -- run build_index() first (see the "
+                "bottom of this file for how to do that from the command line)."
+            )
+        data = np.load(INDEX_FILE)
+        _index_cache["embeddings"] = data["embeddings"]
+
+        with open(CHUNKS_FILE, "r") as f:
+            chunk_data = json.load(f)
+        _index_cache["chunks"] = chunk_data["chunks"]
+
+    return _index_cache["embeddings"], _index_cache["chunks"]
+
+
 def retrieve(query: str, top_k: int = 3) -> list[str]:
     """Given a patient's question, returns the top_k most relevant chunks
     of hospital policy text. Call this from inside the graph."""
-    if not os.path.exists(INDEX_FILE):
-        raise FileNotFoundError(
-            "No RAG index found -- run build_index() first (see the "
-            "bottom of this file for how to do that from the command line)."
-        )
-
-    data = np.load(INDEX_FILE)
-    embeddings = data["embeddings"]
-
-    with open(CHUNKS_FILE, "r") as f:
-        chunk_data = json.load(f)
-    chunks = chunk_data["chunks"]
+    embeddings, chunks = _load_index()
 
     query_embedding = embedding_model.encode([query])[0]
     similarities = _cosine_similarity(query_embedding, embeddings)

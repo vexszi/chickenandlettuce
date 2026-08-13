@@ -53,6 +53,13 @@ class HospitalState(TypedDict):
         "book_appointment", "cancel_appointment", "reschedule_appointment",
         "other"
     ]
+    # ^ NOTE: "emergency" is kept here for schema parity with
+    # schemas.IntentAndExtraction, but routing normally short-circuits to
+    # final_response_node via status=="blocked" before intent is even
+    # checked (see route_intent in nodes.py + emergency_detected in the
+    # system prompt). The "emergency" branch in hospital_graph.py's
+    # conditional edges is a safety net for the rare case the model
+    # returns intent="emergency" without also setting emergency_detected.
     guardrail_triggered: bool
     emergency_detected: bool
     emergency_reason: Optional[str]

@@ -1,5 +1,6 @@
 import os
 import json
+from typing import Optional
 from google import genai
 from datetime import datetime, timedelta
 
@@ -11,6 +12,21 @@ from auth import register_patient
 from auth import get_appointments
 
 DAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+
+_doctors_cache: Optional[dict] = None
+
+
+def _load_doctors() -> dict:
+    """doctors.json is static reference data -- previously every call to
+    _decide_department() and find_available_slots() re-read and re-parsed
+    it from disk. Cached in memory now; restart the process (or call
+    _load_doctors.cache_clear-equivalent by resetting _doctors_cache)
+    if doctors.json is edited while the server is running."""
+    global _doctors_cache
+    if _doctors_cache is None:
+        with open("doctors.json") as f:
+            _doctors_cache = json.load(f)
+    return _doctors_cache
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -190,8 +206,7 @@ def _decide_department(state: HospitalState) -> dict:
     symptoms = state.get("symptoms", "")
     requested_doctor = state.get("requested_doctor_name")
 
-    with open("doctors.json") as f:
-        doctors = json.load(f)
+    doctors = _load_doctors()
 
     # If a specific doctor was named and actually exists, skip guessing --
     # just use their department directly.
@@ -216,8 +231,7 @@ def _decide_department(state: HospitalState) -> dict:
 
 
 def find_available_slots(state: HospitalState) -> list[dict]:
-    with open("doctors.json") as f:
-        doctors = json.load(f)
+    doctors = _load_doctors()
 
     department = state.get("department")
     gender_pref = state.get("patient_info", {}).get("gender_pref")

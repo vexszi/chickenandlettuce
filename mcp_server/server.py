@@ -26,15 +26,25 @@ def get_gmail_service():
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
+            with open("token.json", "w") as token:
+                token.write(creds.to_json())
         else:
-            flow = InstalledAppFlow.from_client_secrets_file(
-                "credentials.json",
-                SCOPES
+            # IMPORTANT: don't launch an interactive browser OAuth flow
+            # from inside a live request (confirm_booking() in book.py
+            # calls this synchronously while a patient is waiting on a
+            # response -- InstalledAppFlow.run_local_server() would spin
+            # up a local HTTP server and block that request thread
+            # indefinitely waiting on a browser that no one is looking
+            # at). Do the one-time interactive auth ahead of time instead:
+            #   python mcp_server/test_mcp.py --send
+            # which will open the consent screen once and write token.json.
+            raise RuntimeError(
+                "No valid Gmail token.json found. Run "
+                "`python mcp_server/test_mcp.py --send` once from the repo "
+                "root (with credentials.json present) to complete the "
+                "interactive OAuth consent and cache token.json. "
+                "Do not attempt interactive auth from a live server request."
             )
-            creds = flow.run_local_server(port=0)
-
-        with open("token.json", "w") as token:
-            token.write(creds.to_json())
 
     return build("gmail", "v1", credentials=creds)
 

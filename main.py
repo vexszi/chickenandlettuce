@@ -47,6 +47,7 @@ class ChatRequest(BaseModel):
     thread_id: str
     message: str
     is_first_time: Optional[bool] = None
+    old_patient_follow_up: Optional[bool] = None
     patient_id: Optional[str] = None
     new_account_password: Optional[str] = None
     selected_slot: Optional[dict] = None
@@ -119,16 +120,6 @@ def api_chat(req: ChatRequest):
         "available_appointments": result.get("available_appointments"),
     }
 
-
-class ChatRequest(BaseModel):
-    thread_id: str
-    message: str
-    is_first_time: Optional[bool] = None
-    old_patient_follow_up: Optional[bool] = None   # <-- new
-    patient_id: Optional[str] = None
-    new_account_password: Optional[str] = None
-    selected_slot: Optional[dict] = None
-    existing_appointment_id: Optional[str] = None
 
 if __name__ == "__main__":
     import uvicorn

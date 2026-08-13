@@ -1,0 +1,38 @@
+{
+  "chunks": [
+    "Appointment Scheduling and Cancellation Policy\n\nNew patients should arrive 20 minutes before their first appointment to complete registration paperwork. Returning patients should arrive 10 minutes early. Appointments can be cancelled or rescheduled up to 24 hours in advance without penalty. Cancellations made less than 24 hours before the appointment, or missed appointments without notice, may incur a $25 no-show fee. Patients who miss three appointments without cancelling may be asked to provid",
+    "intments without cancelling may be asked to provide a deposit for future bookings. Same-day appointments are available for urgent, non-emergency concerns on a limited basis -- call ahead to check availability.\n",
+    "Emergency Room Policy\n\nThe Emergency Department is open 24 hours a day, 7 days a week, and treats patients in order of medical urgency, not arrival time -- this means some patients may be seen before others who arrived earlier. Life-threatening conditions such as chest pain, difficulty breathing, severe bleeding, stroke symptoms, or loss of consciousness are treated immediately. For non-life-threatening urgent concerns, our Urgent Care clinic next door may result in a shorter wait. Anyone in a m",
+    "t door may result in a shorter wait. Anyone in a medical emergency should call 911 or go directly to the nearest Emergency Room rather than contacting this assistant.\n",
+    "Insurance and Billing Policy\n\nWe accept most major insurance providers including Aetna, Blue Cross Blue Shield, Cigna, and UnitedHealthcare. Patients without insurance may be eligible for our financial assistance program, which covers a percentage of costs based on household income. Co-pays are due at the time of service. Billing statements are sent within 30 days of a visit, and payment plans are available for balances over $500. For billing questions, patients can call the billing department d",
+    "stions, patients can call the billing department directly rather than the general front desk line.\n",
+    "Lab Results and Telehealth Policy\n\nRoutine lab results are typically available in the patient portal within 3 to 5 business days. Urgent or critical results are communicated directly by phone from your care team, usually within 24 hours. Telehealth video appointments are available for follow-up visits, medication management, and many non-urgent concerns, but are not available for conditions requiring a physical examination, such as new injuries or suspected infections. Telehealth visits require ",
+    "r suspected infections. Telehealth visits require a stable internet connection and can be booked the same way as in-person appointments.\n",
+    "Parking and Directions\n\nFree patient parking is available in the North Garage, accessible from Main Street. Validated parking is available at the front desk for visitors staying longer than 2 hours. The main entrance is on the ground floor of Building A. Patients with mobility needs can request valet parking at no additional cost by calling ahead. The Emergency Department has a separate entrance on the east side of the building, with dedicated short-term parking directly outside.\n",
+    "ort-term parking directly outside.\n",
+    "Pharmacy and Prescription Refill Policy\n\nOur on-site pharmacy is open Monday through Saturday, 8:00 AM to 9:00 PM, and closed Sundays. Prescription refill requests should be submitted at least 3 business days before you run out, either through the patient portal or by calling the pharmacy directly. Refills for controlled substances require a follow-up appointment and cannot be authorized over the phone. If your prescribing doctor is unavailable, another provider in the same department may review",
+    "another provider in the same department may review refill requests, but this can take longer than usual.\n",
+    "Patient Privacy and Medical Records Policy\n\nAll patient information is protected under HIPAA and will not be shared with anyone outside your care team without your written consent, except as required by law. Patients can request a copy of their medical records by submitting a written request to the Health Information Management department; requests are typically fulfilled within 10 business days. There is no charge for the first copy of your records each calendar year. Patients may also grant a ",
+    "rds each calendar year. Patients may also grant a family member or caregiver access to their records by completing an authorization form, available at the front desk or through the patient portal.\n",
+    "Visiting Hours Policy\n\nGeneral visiting hours are 9:00 AM to 8:00 PM daily. Patients in the ICU may have visitors from 10:00 AM to 12:00 PM and 4:00 PM to 6:00 PM only, with a maximum of two visitors at a time. Children under 12 are not permitted in the ICU. Maternity ward visiting hours are 8:00 AM to 9:00 PM, with only one support person allowed to stay overnight. All visitors must check in at the front desk and wear a visitor badge at all times.\n",
+    "s.\n"
+  ],
+  "sources": [
+    "appointment_policy.txt",
+    "appointment_policy.txt",
+    "emergency_room_policy.txt",
+    "emergency_room_policy.txt",
+    "insurance_billing.txt",
+    "insurance_billing.txt",
+    "lab_telehealth_policy.txt",
+    "lab_telehealth_policy.txt",
+    "parking_directions.txt",
+    "parking_directions.txt",
+    "pharmacy_policy.txt",
+    "pharmacy_policy.txt",
+    "privacy_records_policy.txt",
+    "privacy_records_policy.txt",
+    "visiting_hours.txt",
+    "visiting_hours.txt"
+  ]
+}

@@ -2,6 +2,7 @@ import os
 import requests
 from datetime import datetime, timezone
 from dotenv import load_dotenv
+from langdetect import detect_langs, LangDetectException
 from state import HospitalState
 
 from google.cloud import translate_v2 as translate
@@ -23,6 +24,26 @@ azure_client = DocumentIntelligenceClient(
 )
 
 # ---------------------------------------------------------------------------
+# Cheap local pre-filter so we don't pay a Google Translate API round-trip
+# on every single message. langdetect is a lightweight, offline, pure-python
+# library -- no network call, no model download. We only trust it enough to
+# SKIP the real API when it's confident the text is English; anything it's
+# unsure about (or errors on, e.g. very short messages) still goes through
+# the real translate call so accuracy never regresses.
+# ---------------------------------------------------------------------------
+EN_CONFIDENCE_THRESHOLD = 0.90
+
+def _confidently_english(text: str) -> bool:
+    try:
+        guesses = detect_langs(text)
+    except LangDetectException:
+        # e.g. text with no detectable letters (numbers/punctuation only) --
+        # don't guess, let the real API decide.
+        return False
+    return bool(guesses) and guesses[0].lang == "en" and guesses[0].prob >= EN_CONFIDENCE_THRESHOLD
+
+
+# ---------------------------------------------------------------------------
 # 1a. Translate INCOMING text to English (normalizes whatever language
 #     the patient just used, and captures what that language was).
 #     Runs INSIDE the graph, every turn. Audio is transcribed
@@ -33,18 +54,26 @@ def translate_incoming_tool(state: HospitalState) -> dict:
 
     message_text = state["messages"][-1].content if state.get("messages") else None
     if message_text:
-        result = translate_client.translate(message_text, target_language="en")
-        updates["translated_text"] = result["translatedText"]
-        updates["detected_language"] = result["detectedSourceLanguage"]
+        if _confidently_english(message_text):
+            updates["translated_text"] = message_text
+            updates["detected_language"] = "en"
+        else:
+            result = translate_client.translate(message_text, target_language="en")
+            updates["translated_text"] = result["translatedText"]
+            updates["detected_language"] = result["detectedSourceLanguage"]
 
     doc_list = state.get("ocr_text", [])
     already_translated = state.get("translated_doc_count", 0)
 
     if len(doc_list) > already_translated:
         new_doc = doc_list[-1]
-        result = translate_client.translate(new_doc, target_language="en")
-        updates["translated_document_text"] = result["translatedText"]
-        updates.setdefault("detected_language", result["detectedSourceLanguage"])
+        if _confidently_english(new_doc):
+            updates["translated_document_text"] = new_doc
+            updates.setdefault("detected_language", "en")
+        else:
+            result = translate_client.translate(new_doc, target_language="en")
+            updates["translated_document_text"] = result["translatedText"]
+            updates.setdefault("detected_language", result["detectedSourceLanguage"])
         updates["translated_doc_count"] = len(doc_list)
 
     return updates

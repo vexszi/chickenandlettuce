@@ -40,6 +40,7 @@ builder.add_conditional_edges(
         "cancel_appointment": "cancel_appointment",
         "reschedule_appointment": "reschedule_appointment",
         "other": "other_intent_node",
+        "emergency": "final_response_node",
         "final_response_node": "final_response_node",
     },
 )
