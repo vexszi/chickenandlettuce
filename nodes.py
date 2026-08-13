@@ -61,7 +61,7 @@ def intent_guardrail_extraction_node(state: HospitalState) -> dict:
     text = state.get("masked_text", "")
 
     response = client.models.generate_content(
-        model="gemini-3.5-flash",
+        model="gemini-3.6-flash",
         contents=f"{SYSTEM_PROMPT}\n\nPatient message:\n{text}",
         config={
             "response_mime_type": "application/json",
@@ -135,7 +135,7 @@ def document_explainer_node(state: HospitalState) -> dict:
     {patient_question if patient_question else "(No specific question -- give a general explanation of the document.)"}"""
 
     response = client.models.generate_content(
-        model="gemini-3.5-flash",
+        model="gemini-3.6-flash",
         contents=prompt,
     )
 
@@ -172,7 +172,7 @@ def hospital_policy(state: HospitalState) -> dict:
     """
 
   response = client.models.generate_content(
-    model="gemini-3.5-flash",
+    model="gemini-3.6-flash",
     contents=prompt,
 )
   return {
@@ -189,7 +189,7 @@ def hospital_policy(state: HospitalState) -> dict:
 # ---------------------------------------------------------------------------
 def other_intent_node(state: HospitalState) -> dict:
     response = client.models.generate_content(
-        model="gemini-3.5-flash",
+        model="gemini-3.6-flash",
         contents=(
             "You are a hospital front desk assistant. Respond helpfully and "
             "briefly to this message, and if relevant, remind the patient "

@@ -63,7 +63,7 @@ def _ask_for(missing: list[str]) -> str:
     - Do NOT mention or ask about anything not in the list above.
     - Return ONLY the message.
     """
-    response = client.models.generate_content(model="gemini-3.5-flash", contents=prompt)
+    response = client.models.generate_content(model="gemini-3.6-flash", contents=prompt)
     return response.text.strip()
 
 
@@ -210,7 +210,7 @@ def _decide_department(state: HospitalState) -> dict:
     Return ONLY JSON in this shape:
     {{"department": ""}}
     """
-    response = client.models.generate_content(model="gemini-3.5-flash", contents=prompt)
+    response = client.models.generate_content(model="gemini-3.6-flash", contents=prompt)
     result = json.loads(response.text.strip())
     return {"department": result.get("department")}
 
