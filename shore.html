@@ -985,8 +985,10 @@ const SUPPORTED_LANGUAGES = {
   zh: 'Chinese', hi: 'Hindi'
 };
 
-const API_BASE_URL = 'http://localhost:8000';
-
+const API_BASE_URL = window.location.hostname === 'localhost'
+  ? 'http://localhost:8000'
+  : ''; // same-origin in prod, or set to your deployed API URL
+  
 async function apiPost(endpoint, body) {
   const res = await fetch(`${API_BASE_URL}${endpoint}`, {
     method: 'POST',
@@ -1036,14 +1038,63 @@ function setWelcomeLang(code) {
 
 
 /* Language auto-detection stub */
-function runLanguageDetection(text) {
+// detect-input calls runLanguageDetectionStub(this.value) — only runLanguageDetection (empty) exists
+function runLanguageDetectionStub(text) {
+  const resultEl = document.getElementById('detect-result');
+  if (!text.trim()) { resultEl.textContent = '\u00A0'; return; }
+  resultEl.textContent = 'Detected — set your language above, or send a message and I\'ll pick it up automatically.';
+}
 
+// lang-mic-btn calls toggleLanguageVoiceCapture() — didn't exist at all
+async function toggleLanguageVoiceCapture() {
+  const btn = document.getElementById('lang-mic-btn');
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch (err) {
+    document.getElementById('detect-result').textContent = "Couldn't access microphone.";
+    return;
+  }
+  const recorder = new MediaRecorder(stream);
+  const chunks = [];
+  recorder.ondataavailable = e => chunks.push(e.data);
+  recorder.onstop = async () => {
+    stream.getTracks().forEach(t => t.stop());
+    btn.classList.remove('is-recording');
+    const blob = new Blob(chunks, { type: recorder.mimeType || 'audio/webm' });
+    const formData = new FormData();
+    formData.append('audio', blob, 'detect.webm');
+    document.getElementById('detect-result').textContent = 'Transcribing…';
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/audio/transcribe`, { method: 'POST', body: formData });
+      const data = await res.json();
+      if (data.success && data.transcript) {
+        document.getElementById('detect-input').value = data.transcript;
+        runLanguageDetectionStub(data.transcript);
+      } else {
+        document.getElementById('detect-result').textContent = "Couldn't transcribe that.";
+      }
+    } catch (err) {
+      document.getElementById('detect-result').textContent = "Transcription failed.";
+    }
+  };
+  recorder.start();
+  btn.classList.add('is-recording');
+  setTimeout(() => { if (recorder.state === 'recording') recorder.stop(); }, 5000);
 }
 
 /* Transition from Welcome/Terms to Main Interface */
-function enterMainChatInterface() {
+async function enterMainChatInterface() {
+  const btn = document.getElementById('btn-continue-welcome');
+  if (btn.dataset.busy === 'true') return;   // double-click guard
+  btn.dataset.busy = 'true';
+  btn.disabled = true;
+
   showScreen('screen-main');
-  initAssistantChat();
+  await showGreeting();
+
+  btn.disabled = false;
+  btn.dataset.busy = 'false';
 }
 
 /* ==================================================================
@@ -1488,11 +1539,9 @@ async function handleOcrFileUpload(event) {
         data.reason || 'The document could not be read.'
       );
     }
-
-    addBotMessage(
-      `I've successfully read your document. You can now ask me about it.`
-    );
-
+    addBotMessage(`I've successfully read your document. You can now ask me about it.`);
+    const docCountEl = document.getElementById('prof-docs');
+    if (docCountEl) docCountEl.value = data.doc_count;
   } catch (err) {
     console.error('OCR upload failed:', err);
 
@@ -1643,14 +1692,10 @@ let lastConfirmedAppointment = null;   // populated by showConfirmationScreen()
 async function fetchTranslatedGreeting(lang) {
   const fallback = `Hello! I'm your Cove Assistant. How can I help you today? You can book, reschedule, or ask questions in ${patientState.languageLabel}.`;
   try {
-    const res = await fetch('http://localhost:8000/api/chat/greeting', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ preferred_language: lang }),
-    });
-    const data = await res.json();
+    const data = await apiPost('/api/chat/greeting', { preferred_language: lang });
     return data.output_text || fallback;
   } catch (err) {
+    console.error('Greeting fetch failed:', err);
     return fallback;
   }
 }
@@ -1698,22 +1743,34 @@ function addBotMessage(text, extraHtml = '') {
 
 /* Send user text message handler */
 function sendTextMessage() {
+  if (chatBusy) return;
   const input = document.getElementById('chat-input');
   const text = input.value.trim();
-  if(!text) return;
+  if (!text) return;
   input.value = '';
-
   addUserMessage(text);
-  processIncomingUserIntent(text);
+  processUserMessage(text);
 }
 
-/* Suggested-question chips (above the composer) feed straight into
-   the same pipeline as typed text — tap one and it's sent exactly
-   as if the patient had typed and hit send. */
 function askSuggested(text) {
+  if (chatBusy) return;
   addUserMessage(text);
-  processIncomingUserIntent(text);
+  processUserMessage(text);
 }
+// add near chatLog declaration
+let chatBusy = false;
+
+function setChatBusy(isBusy) {
+  chatBusy = isBusy;
+  document.getElementById('chat-input').disabled = isBusy;
+  document.querySelector('.send-btn').disabled = isBusy;
+  document.getElementById('mic-btn').disabled = isBusy;
+  document.querySelectorAll('.quick-chip').forEach(c => c.disabled = isBusy);
+  document.querySelectorAll('.choice-card').forEach(c => c.disabled = isBusy);
+}
+
+
+
 
 function renderAssistantReply(data) {
   // ------------------------------------------------------------
@@ -1726,6 +1783,12 @@ function renderAssistantReply(data) {
     );
     return;
   }
+
+  // ------------------------------------------------------------
+  // #. MCQ's
+  // ------------------------------------------------------------
+    if (data.status === 'needs_patient_type') { askNewPatientMCQ(); return; }
+    if (data.status === 'needs_visit_type') { askVisitTypeMCQ(); return; }
 
   // ------------------------------------------------------------
   // 2. Normal assistant response
@@ -1848,23 +1911,24 @@ function selectAppointmentById(appointmentId) {
 
 /* Processes the message using the backend and triggers MCQ questions when booking*/
 async function processUserMessage(text) {
+  setChatBusy(true);
   try {
-    const data = await apiPost('/api/chat/message', {
+    const payload = {
       thread_id: threadId,
       message: text,
-      is_first_time: patientState.isNewPatient === true,
-      old_patient_follow_up: patientState.visitType === 'followup',
       patient_id: patientState.patientId,
-      preferred_language: patientState.language
-    });
+      preferred_language: patientState.language,
+    };
+    if (patientState.isNewPatient !== null) payload.is_first_time = patientState.isNewPatient === true;
+    if (patientState.visitType !== null) payload.old_patient_follow_up = patientState.visitType === 'followup';
 
+    const data = await apiPost('/api/chat/message', payload);
     renderAssistantReply(data);
-
   } catch (err) {
-    console.error('Chat request failed:', err);
-    addBotMessage(
-      "Sorry, I couldn't reach COVE's server right now. Please try again."
-    );
+  console.error('...failed:', err);
+  addBotMessage(err.message || "Sorry, something went wrong. Please try again.");
+  } finally {
+    setChatBusy(false);
   }
 }
 
@@ -1883,10 +1947,8 @@ async function selectSlot(slot) {
     renderAssistantReply(data);
 
   } catch (err) {
-    console.error('Appointment selection failed:', err);
-    addBotMessage(
-      "Sorry, I couldn't confirm that appointment. Please try again."
-    );
+  console.error('...failed:', err);
+  addBotMessage(err.message || "Sorry, something went wrong. Please try again.");
   }
 }
 
@@ -1905,10 +1967,8 @@ async function selectAppointment(appointmentId) {
     renderAssistantReply(data);
 
   } catch (err) {
-    console.error('Appointment selection failed:', err);
-    addBotMessage(
-      "Sorry, I couldn't process that appointment. Please try again."
-    );
+  console.error('...failed:', err);
+  addBotMessage(err.message || "Sorry, something went wrong. Please try again.");
   }
 }
 
@@ -1936,10 +1996,8 @@ async function submitAccountPassword() {
     renderAssistantReply(data);
 
   } catch (err) {
-    console.error('Password submission failed:', err);
-    addBotMessage(
-      "Sorry, I couldn't finish creating your account. Please try again."
-    );
+  console.error('...failed:', err);
+  addBotMessage(err.message || "Sorry, something went wrong. Please try again.");
   }
 }
 

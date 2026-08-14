@@ -212,6 +212,16 @@ def final_response_node(state: HospitalState) -> dict:
 # Calls: save_appointment and book.py
 # ----------------------------------------------------------------------------
 def book_appointment(state: HospitalState) -> dict:
+    if not state.get("patient_id") and "is_first_time" not in state:
+        return {
+            "output_text": "Are you a new patient, or have you visited us before?",
+            "status": "needs_patient_type",
+        }
+    if state.get("patient_id") and not state.get("is_first_time") and "old_patient_follow_up" not in state:
+        return {
+            "output_text": "Is this a follow-up on an existing concern, or a new visit?",
+            "status": "needs_visit_type",
+        }
     return book_appointment_flow(state)
 
 

@@ -142,6 +142,16 @@ def api_chat(req: ChatRequest):
 
     # Merge this turn's updates into the saved session for next time.
     state.update(result)
+    if result.get("status") == "complete":
+        for key in (
+            "selected_slot", "available_slots", "available_appointments",
+            "booking_checklist", "department", "requested_doctor_name",
+            "existing_appointment_id", "held_appointment_id",
+            "confirmed_appointment", "symptoms",
+        ):
+            state.pop(key, None)
+
+    SESSIONS[req.thread_id] = state
     SESSIONS[req.thread_id] = state
 
     # Only send back what the frontend actually needs to render.
