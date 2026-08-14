@@ -2,7 +2,6 @@ import os
 import tempfile
 
 from fastapi import FastAPI, UploadFile, File, Form
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from typing import Optional
@@ -13,6 +12,15 @@ from hospital_graph import graph
 from tools import ocr_tool, translate_outgoing_tool, transcription_tool, tts_tool
 
 app = FastAPI()
+from fastapi.middleware.cors import CORSMiddleware
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # CORS: the browser blocks fetch() calls to a different origin/port by
 # default. This tells the browser "it's fine, let shore.html talk to me."
@@ -151,7 +159,6 @@ def api_chat(req: ChatRequest):
         ):
             state.pop(key, None)
 
-    SESSIONS[req.thread_id] = state
     SESSIONS[req.thread_id] = state
 
     # Only send back what the frontend actually needs to render.

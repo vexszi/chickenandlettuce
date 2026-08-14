@@ -962,7 +962,6 @@ const patientState = {
   patientId: null,
   isNewPatient: null,
 
-  isNewPatient: null,
   visitType: null,
 
   language: 'en',
@@ -973,7 +972,8 @@ const patientState = {
   sidebarOpen: true,
   profileOpen: false,
 
-  pendingAppointmentAction: null
+  pendingAppointmentAction: null,
+  pendingBookingAfterLogin: false
 };
 
 const SUPPORTED_LANGUAGES = {
@@ -989,8 +989,8 @@ const API_BASE_URL = window.location.hostname === 'localhost'
   ? 'http://localhost:8000'
   : ''; // same-origin in prod, or set to your deployed API URL
   
-async function apiPost(endpoint, body) {
-  const res = await fetch(`${API_BASE_URL}${endpoint}`, {
+async function apiPost(path, body) {
+  const res = await fetch(`http://localhost:8000${path}`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json'
@@ -998,13 +998,11 @@ async function apiPost(endpoint, body) {
     body: JSON.stringify(body)
   });
 
-  const data = await res.json();
-
   if (!res.ok) {
-    throw new Error(data.detail || data.reason || `Request failed (${res.status})`);
+    throw new Error(`Server error: ${res.status}`);
   }
 
-  return data;
+  return await res.json();
 }
 
 let threadId = `session-${Date.now()}`;
@@ -1216,6 +1214,7 @@ function resetConversation() {
   patientState.sidebarOpen = true;
   patientState.profileOpen = false;
   patientState.pendingAppointmentAction = null;
+  patientState.pendingBookingAfterLogin = false;
 
   // Clear the chat log and composer.
   chatLog.innerHTML = '';
@@ -1386,6 +1385,10 @@ function completeLogin(isNewPatient, patientId) {
   addBotMessage(isNewPatient
     ? "Welcome! You're logged in as a new patient."
     : "Welcome back! You are now logged in as an existing patient.");
+}
+if (patientState.pendingBookingAfterLogin) {
+  patientState.pendingBookingAfterLogin = false;
+  processUserMessage('');
 }
 /* Collects the sign-up form and hands it to the backend register_patient
    call. This is the one place in the whole app that registers a brand
@@ -2017,6 +2020,51 @@ function askNewPatientMCQ() {
   setTimeout(() => {
     addBotMessage("To proceed with your request, I need to know your patient status.", mcqHtml);
   }, 400);
+}
+
+function handleVisitTypeMCQResponse(type) {
+  // Save the answer in frontend state.
+  patientState.visitType = type;
+
+  // Show the patient's choice in the chat.
+  addUserMessage(
+    type === 'followup'
+      ? "Follow-up visit"
+      : "New visit"
+  );
+
+  // Re-run the current booking request with the newly known
+  // visit type.
+  processUserMessage('');
+}
+
+function handleNewPatientMCQResponse(isNew) {
+  // Save the answer in frontend state.
+  patientState.isNewPatient = isNew;
+
+  // Show the patient's choice in the chat.
+  addUserMessage(
+    isNew
+      ? "Yes, I am a new patient"
+      : "No, I am an existing patient"
+  );
+
+  // Existing patients need to log in before we can access
+  // their existing patient information.
+  if (!isNew && !patientState.isLoggedIn) {
+    patientState.pendingBookingAfterLogin = true;
+
+    addBotMessage(
+      "No problem — please log in so I can access your existing patient information."
+    );
+
+    openLoginModal();
+    return;
+  }
+
+  // Re-run the current booking request with the newly known
+  // patient status.
+  processUserMessage('');
 }
 
 /* MULTIPLE CHOICE QUESTION: "Is this a follow up or new visit?" */
