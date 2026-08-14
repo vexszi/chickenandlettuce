@@ -212,17 +212,7 @@ def final_response_node(state: HospitalState) -> dict:
 # Calls: save_appointment and book.py
 # ----------------------------------------------------------------------------
 def book_appointment(state: HospitalState) -> dict:
-    updates = {}
-    working_state = {**state}
-
-    while True:
-        result = book_appointment_flow(working_state)
-        updates.update(result)
-        working_state.update(result)
-        if result.get("status") != "in_progress":
-            break
-
-    return updates
+    return book_appointment_flow(state)
 
 
 # ----------------------------------------------------------------------------

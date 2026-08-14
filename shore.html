@@ -781,8 +781,8 @@ p.lede { color: var(--ink-soft); font-size: 15px; line-height: 1.6; max-width: 4
       <p class="lede">Your appointment details have been booked successfully.</p>
 
       <div class="profile-card" style="margin-top:20px; text-align:left;">
-        <p><strong>Doctor:</strong> Dr. Alana Reyes (Primary Care)</p>
-        <p><strong>Date &amp; Time:</strong> Tomorrow at 10:00 AM</p>
+        <p><strong>Doctor:</strong> <span id="conf-doctor">Dr. Alana Reyes</span> (<span id="conf-department">Primary Care</span>)</p>
+        <p><strong>Date &amp; Time:</strong> <span id="conf-datetime">Tomorrow at 10:00 AM</span></p>
         <p><strong>Location:</strong> Main Campus, 2nd Floor</p>
         <p><strong>Confirmation Code:</strong> <span id="pdf-conf-code">COVE-8842</span></p>
       </div>
@@ -959,17 +959,21 @@ p.lede { color: var(--ink-soft); font-size: 15px; line-height: 1.6; max-width: 4
    Tracks language, patient status, doc counts, and sidebar toggling.
 =================================================================== */
 const patientState = {
-  isNewPatient: null,            // true | false | null (asked in chat)
-  visitType: null,               // 'followup' | 'new' (asked in chat for existing)
-  symptoms: null,                // free-text reason for visit, sent to the department-routing RAG pipeline
-  awaitingSymptoms: false,       // true while the chat is waiting on the symptom question above
+  patientId: null,
+  isNewPatient: null,
+
+  isNewPatient: null,
+  visitType: null,
+
   language: 'en',
   languageLabel: 'English',
-  translated_doc_count: 0,       // Required parameter for ocr_text tool
+  
   isLoggedIn: false,
+
   sidebarOpen: true,
   profileOpen: false,
-  pendingAppointmentAction: null // Stores action while asking patient status
+
+  pendingAppointmentAction: null
 };
 
 const SUPPORTED_LANGUAGES = {
@@ -980,6 +984,28 @@ const SUPPORTED_LANGUAGES = {
   id: 'Indonesian', vi: 'Vietnamese', th: 'Thai', ja: 'Japanese', ko: 'Korean',
   zh: 'Chinese', hi: 'Hindi'
 };
+
+const API_BASE_URL = 'http://localhost:8000';
+
+async function apiPost(endpoint, body) {
+  const res = await fetch(`${API_BASE_URL}${endpoint}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(body)
+  });
+
+  const data = await res.json();
+
+  if (!res.ok) {
+    throw new Error(data.detail || data.reason || `Request failed (${res.status})`);
+  }
+
+  return data;
+}
+
+let threadId = `session-${Date.now()}`;
 
 /* ==================================================================
    NAVIGATION & SCREEN ROUTER
@@ -1002,28 +1028,16 @@ function setAppLanguage(code) {
   document.getElementById('current-lang-display').textContent = code.toUpperCase();
   document.getElementById('prof-lang').value = patientState.languageLabel;
 }
-
-/* Language auto-detection stub */
-function runLanguageDetectionStub(text) {
-  const res = document.getElementById('detect-result');
-  if(!text.trim()) { res.textContent = '\u00A0'; return; }
-  
-  if (/\b(hola|gracias|cita)\b/i.test(text)) setWelcomeLang('es');
-  else if (/\b(bonjour|merci)\b/i.test(text)) setWelcomeLang('fr');
-  else if (/\b(hallo|danke)\b/i.test(text)) setWelcomeLang('de');
-  else setWelcomeLang('en');
-  
-  res.textContent = `Detected: ${patientState.languageLabel}`;
-}
 function setWelcomeLang(code) {
   document.getElementById('welcome-lang-select').value = code;
   setAppLanguage(code);
 }
+/* shoudl we combine the 2 above and make it updtae state preffered_lang
 
-/* Voice capture on welcome screen */
-function toggleLanguageVoiceCapture() {
-  playAudioClickCue();
-  runLanguageDetectionStub('hola doctor');
+
+/* Language auto-detection stub */
+function runLanguageDetection(text) {
+
 }
 
 /* Transition from Welcome/Terms to Main Interface */
@@ -1082,8 +1096,14 @@ function openResetConfirm() {
 function closeResetConfirm() {
   document.getElementById('reset-confirm-overlay').classList.remove('is-visible');
 }
-function confirmReset() {
+async function confirmReset() {
   closeResetConfirm();
+
+  await resetBackendSession();
+
+  // Give the next conversation a completely new thread.
+  threadId = crypto.randomUUID();
+
   playWaterTransition(resetConversation);
 }
 
@@ -1107,8 +1127,33 @@ function playWaterTransition(onCovered) {
     }, 480);
   }, 620);
 }
+
+async function resetBackendSession() {
+  try {
+    const res = await fetch(
+      `${API_BASE_URL}/api/session/reset?thread_id=${encodeURIComponent(threadId)}`,
+      {
+        method: 'POST'
+      }
+    );
+
+    if (!res.ok) {
+      console.error('Backend session reset failed:', res.status);
+      return false;
+    }
+
+    const data = await res.json();
+
+    return data.success === true;
+
+  } catch (err) {
+    console.error('Could not reset backend session:', err);
+    return false;
+  }
+}
+
 function resetConversation() {
-  // Reset all in-memory patient state back to its initial values.
+  patientState.patientId = null;
   patientState.isNewPatient = null;
   patientState.visitType = null;
   patientState.symptoms = null;
@@ -1176,11 +1221,9 @@ function resetConversation() {
 }
 
 /* ==================================================================
-   LOGIN — FULL-SCREEN INTERFACE & FINGERPRINT AUTH
+   LOGIN — FULL-SCREEN INTERFACE
 =================================================================== */
 function openLoginModal() {
-  // Always reopen on the password panel, regardless of which panel
-  // was showing last time it was closed.
   showLoginPasswordPanel();
   document.getElementById('login-interface-overlay').classList.add('is-visible');
 }
@@ -1192,21 +1235,70 @@ function showLoginPasswordPanel() {
   document.getElementById('login-fingerprint-panel').style.display = 'none';
   document.getElementById('login-signup-panel').style.display = 'none';
 }
-function showLoginFingerprintPanel() {
-  document.getElementById('login-password-panel').style.display = 'none';
-  document.getElementById('login-signup-panel').style.display = 'none';
-  document.getElementById('login-fingerprint-panel').style.display = 'flex';
-}
 function showLoginSignupPanel() {
   document.getElementById('login-password-panel').style.display = 'none';
   document.getElementById('login-fingerprint-panel').style.display = 'none';
   document.getElementById('login-signup-panel').style.display = 'flex';
 }
+function setLoginButtonBusy(isBusy) {
+  const btn = document.getElementById('login-submit-btn');
+  if (!btn) return;
+  btn.disabled = isBusy;
+  btn.textContent = isBusy ? 'Logging in…' : 'Log in';
+}
+function showLoginError(message) {
+  const el = document.getElementById('login-error-text');
+  if (!el) return;
+  el.textContent = message;
+  el.style.display = 'block';
+}
+function hideLoginError() {
+  const el = document.getElementById('login-error-text');
+  if (el) el.style.display = 'none';
+}
+function showSignupError(message) {
+  const el = document.getElementById('signup-error-text');
+  if (!el) return;
+  el.textContent = message;
+  el.style.display = 'block';
+}
+function hideSignupError() {
+  const el = document.getElementById('signup-error-text');
+  if (el) el.style.display = 'none';
+}
+
+/* ==================================================================
+   PATIENT REGISTRATION AND LOGIN TOOLS: BACKEND CALL
+=================================================================== */
+async function register_patient(params) {
+  const data = await apiPost('/api/patients/register', {
+    name: params.name,
+    email: params.email,
+    password: params.password
+  });
+
+  return {
+    patientId: data.patientId,
+    success: data.success,
+    reason: data.reason
+  };
+}
+
+async function login_patient(params) {
+  const data = await apiPost('/api/patients/login', {
+    email: params.email,
+    password: params.password
+  });
+
+  return {
+    patientId: data.patientId,
+    success: data.success,
+    reason: data.reason
+  };
+}
+
 /* Logs an existing patient in by actually checking their credentials
-   against the backend, rather than trusting whatever's in the fields.
-   Written as async/await against a Promise-returning stub so swapping
-   login_patient()'s body for a real fetch() call later is a drop-in
-   change — nothing here needs to change shape. */
+   against the backend.*/
 async function submitExistingLogin() {
   const email = document.getElementById('login-email-input').value.trim();
   const password = document.getElementById('login-pass-input').value;
@@ -1225,32 +1317,13 @@ async function submitExistingLogin() {
       showLoginError(result.reason || "We couldn't find an account with that email and password.");
       return;
     }
-    completeLogin(false);
+    completeLogin(false, result.patientId);
   } catch (err) {
     showLoginError('Something went wrong reaching the server. Please try again.');
   } finally {
     setLoginButtonBusy(false);
   }
 }
-
-function setLoginButtonBusy(isBusy) {
-  const btn = document.getElementById('login-submit-btn');
-  if (!btn) return;
-  btn.disabled = isBusy;
-  btn.textContent = isBusy ? 'Logging in…' : 'Log in';
-}
-
-function showLoginError(message) {
-  const el = document.getElementById('login-error-text');
-  if (!el) return;
-  el.textContent = message;
-  el.style.display = 'block';
-}
-function hideLoginError() {
-  const el = document.getElementById('login-error-text');
-  if (el) el.style.display = 'none';
-}
-
 /* Shared "successful login" side effects, whether the patient got in
    via password or fingerprint. */
 function completeLogin(isNewPatient, patientId) {
@@ -1263,7 +1336,6 @@ function completeLogin(isNewPatient, patientId) {
     ? "Welcome! You're logged in as a new patient."
     : "Welcome back! You are now logged in as an existing patient.");
 }
-
 /* Collects the sign-up form and hands it to the backend register_patient
    call. This is the one place in the whole app that registers a brand
    new patient record. */
@@ -1288,7 +1360,7 @@ async function submitNewPatientRegistration() {
       showSignupError(result.reason || 'That email may already be registered.');
       return;
     }
-    completeLogin(true);
+    completeLogin(true, result.patientId);
     document.getElementById('prof-lang').value = patientState.languageLabel;
     addBotMessage(`Your account has been created (Patient ID: ${result.patientId}).`);
   } catch (err) {
@@ -1298,41 +1370,8 @@ async function submitNewPatientRegistration() {
   }
 }
 
-function showSignupError(message) {
-  const el = document.getElementById('signup-error-text');
-  if (!el) return;
-  el.textContent = message;
-  el.style.display = 'block';
-}
-function hideSignupError() {
-  const el = document.getElementById('signup-error-text');
-  if (el) el.style.display = 'none';
-}
-
-/* Fingerprint is its own credential-free path — it must NOT funnel
-   through submitExistingLogin(), which requires the email/password
-   fields to be filled. It calls login_patient() with method:
-   'biometric' instead. */
-async function triggerFingerprintAuth() {
-  const status = document.getElementById('fingerprint-status');
-  status.textContent = "Scanning biometric...";
-  try {
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    // Calls backend login_patient with the device's biometric assertion
-    const result = await login_patient({ method: 'biometric' });
-    if (!result.success) {
-      status.textContent = result.reason || "Fingerprint not recognized. Try again or use your password.";
-      return;
-    }
-    status.textContent = "Fingerprint verified ✓";
-    setTimeout(() => completeLogin(false), 600);
-  } catch (err) {
-    status.textContent = "Something went wrong. Please try again.";
-  }
-}
-
 /* ==================================================================
-   AUDIO SOUND CUE & BACKEND INTEGRATION STUBS
+   AUDIO SOUND PLAY: TTS BACKEND CALL
 =================================================================== */
 /* Play sound click cue when user clicks recording */
 function playAudioClickCue() {
@@ -1350,77 +1389,276 @@ function playAudioClickCue() {
   } catch(e) { console.log('Audio cue played'); }
 }
 
-/* Backend Transcription Tool Call */
-function transcription_tool(audioData) {
-  console.log('[BACKEND CALL] Calling transcription_tool with audio data');
-  return "I would like to book an appointment with a doctor.";
+/* TURNS TEXT TO SPEECH*/
+async function playMessageAudio(text, btnEl) {
+  if (!text) return;
+
+  const originalLabel = btnEl
+    ? btnEl.textContent
+    : null;
+
+  if (btnEl) {
+    btnEl.classList.add('is-playing');
+    btnEl.textContent = '🔊 Loading…';
+    btnEl.disabled = true;
+  }
+
+  try {
+    const res = await fetch(
+      `${API_BASE_URL}/api/audio/tts`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          text: text,
+          language: patientState.language
+        })
+      }
+    );
+
+    const data = await res.json();
+
+    if (!res.ok || !data.success || !data.audio_url) {
+      throw new Error(
+        data.reason || 'TTS failed.'
+      );
+    }
+
+    const audio = new Audio(
+      `${API_BASE_URL}${data.audio_url}`
+    );
+
+    if (btnEl) {
+      btnEl.textContent = '🔊 Playing…';
+    }
+
+    await new Promise((resolve, reject) => {
+      audio.onended = resolve;
+      audio.onerror = reject;
+
+      audio.play().catch(reject);
+    });
+
+  } catch (err) {
+    console.error('TTS playback failed:', err);
+
+    if (btnEl) {
+      btnEl.textContent = '🔊 Failed';
+    }
+
+  } finally {
+    if (btnEl) {
+      btnEl.classList.remove('is-playing');
+      btnEl.textContent = originalLabel || '🔊 Listen';
+      btnEl.disabled = false;
+    }
+  }
 }
 
-/* Backend TTS Tool Call for chat bubbles */
-function tts_tool(params) {
-  console.log('[BACKEND CALL] Calling tts_tool for text:', params.text, 'language:', params.language);
+/* ==================================================================
+   FILE UPLOADS: OCR BACKEND CALL
+=================================================================== */
+function triggerFileInput() {
+  document.getElementById('ocr-file-input').click();
+}
+
+async function handleOcrFileUpload(event) {
+  const file = event.target.files?.[0];
+
+  if (!file) return;
+
+  const formData = new FormData();
+  formData.append('thread_id', threadId);
+  formData.append('file', file);
+
+  try {
+    addBotMessage(`I'm reading <strong>${escapeHtml(file.name)}</strong>…`);
+
+    const res = await fetch(`${API_BASE_URL}/api/documents/upload`, {
+      method: 'POST',
+      body: formData
+    });
+
+    const data = await res.json();
+
+    if (!res.ok || !data.success) {
+      throw new Error(
+        data.reason || 'The document could not be read.'
+      );
+    }
+
+    addBotMessage(
+      `I've successfully read your document. You can now ask me about it.`
+    );
+
+  } catch (err) {
+    console.error('OCR upload failed:', err);
+
+    addBotMessage(
+      "Sorry, I couldn't read that document. Please try another file."
+    );
+
+  } finally {
+    // Allows the user to upload the same file again later.
+    event.target.value = '';
+  }
+}
+
+/* ==================================================================
+   AUDIO UPLOADS: STT BACKEND CALL
+=================================================================== */
+
+/* Real voice input: click once to start recording (getUserMedia +
+   MediaRecorder), click again to stop. On stop, the clip is uploaded to
+   /api/audio/transcribe (Deepgram Nova 3, via tools.transcription_tool)
+   and the returned transcript is sent through the normal chat pipeline,
+   exactly like a typed message. Not part of the LangGraph -- purely
+   frontend-triggered by the mic icon, same as OCR uploads. */
+let activeMediaRecorder = null;
+let activeAudioChunks = [];
+let activeMicStream = null;
+
+async function toggleVoiceInputRecording() {
+  const btn = document.getElementById('mic-btn');
+
+  // If already recording, this click means "stop".
+  if (activeMediaRecorder && activeMediaRecorder.state === 'recording') {
+    activeMediaRecorder.stop();
+    return;
+  }
+
   playAudioClickCue();
-}
 
-/* Backend OCR Tool Call - Requires translated_doc_count parameter */
-function ocr_tool(params) {
-  console.log('[BACKEND CALL] Calling ocr_tool with file:', params.fileName, 'translated_doc_count:', params.translated_doc_count);
-  return `OCR Extracted Text from ${params.fileName}: Patient visit summary and medical report.`;
-}
+  let stream;
 
-/* Backend Patient Registration Tool Call - creates a new patient record.
-   Called only from submitNewPatientRegistration() on the sign-up panel. */
-/* Backend Patient Registration Tool Call - creates a new patient record.
-   Called only from submitNewPatientRegistration() on the sign-up panel.
-   Written as async so the real implementation can be a plain fetch()
-   to your API with no change to any caller. Never log params.password
-   verbatim — only the email is logged here, on purpose. */
-async function register_patient(params) {
-  const res = await fetch('http://localhost:8000/api/patients/register', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      name: params.name,
-      email: params.email,
-      password: params.password,
-    }),
-  });
-  const data = await res.json();
-  return { patientId: data.patientId, success: data.success, reason: data.reason };
-}
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: true
+    });
+  } catch (err) {
+    console.error('Microphone access failed:', err);
 
-/* Backend Login Tool Call - verifies credentials (password or biometric)
-   for an existing patient. Called from submitExistingLogin() and
-   triggerFingerprintAuth(). Never log params.password verbatim. */
-async function login_patient(params) {
-  const res = await fetch('http://localhost:8000/api/patients/login', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      email: params.email,
-      password: params.password,
-    }),
-  });
-  const data = await res.json();
-  return { patientId: data.patientId, success: data.success, reason: data.reason };
-}
+    addBotMessage(
+      "I couldn't access your microphone. Please check your browser's microphone permissions and try again."
+    );
 
-/* Backend Department Routing Tool Call - this is a thin wrapper around
-   the existing symptom -> department RAG pipeline. It only forwards the
-   patient's own words; all triage/classification logic lives server-side. */
-function determine_department_tool(params) {
-  console.log('[BACKEND CALL] Calling determine_department_tool with symptoms:', params.symptoms, 'language:', params.language);
-  return { department: 'Primary Care', doctor: 'Dr. Alana Reyes', when: 'Tomorrow · 10:00 AM' };
+    return;
+  }
+
+  activeMicStream = stream;
+  activeAudioChunks = [];
+
+  activeMediaRecorder = new MediaRecorder(stream);
+
+  activeMediaRecorder.ondataavailable = (event) => {
+    if (event.data && event.data.size > 0) {
+      activeAudioChunks.push(event.data);
+    }
+  };
+
+  activeMediaRecorder.onstop = async () => {
+    btn.classList.remove('is-recording');
+
+    // Stop using the microphone immediately.
+    if (activeMicStream) {
+      activeMicStream.getTracks().forEach(track => track.stop());
+      activeMicStream = null;
+    }
+
+    const mimeType = activeMediaRecorder.mimeType || 'audio/webm';
+
+    const blob = new Blob(activeAudioChunks, {
+      type: mimeType
+    });
+
+    const extension = mimeType.includes('ogg') ? 'ogg' : 'webm';
+
+    const formData = new FormData();
+
+    formData.append(
+      'audio',
+      blob,
+      `recording.${extension}`
+    );
+
+    addBotMessage("I'm transcribing that…");
+
+    try {
+      const res = await fetch(
+        `${API_BASE_URL}/api/audio/transcribe`,
+        {
+          method: 'POST',
+          body: formData
+        }
+      );
+
+      const result = await res.json();
+
+      if (!res.ok || !result.success || !result.transcript) {
+        throw new Error(
+          result.reason || 'Transcription failed.'
+        );
+      }
+
+      const transcript = result.transcript.trim();
+
+      if (!transcript) {
+        addBotMessage(
+          "I couldn't hear anything clearly. Please try again."
+        );
+        return;
+      }
+
+      // Treat the transcript exactly like typed text.
+      addUserMessage(transcript);
+      await processUserMessage(transcript);
+
+    } catch (err) {
+      console.error('Transcription failed:', err);
+
+      addBotMessage(
+        "Sorry, I couldn't transcribe that. Please try again or type your message."
+      );
+    } finally {
+      activeAudioChunks = [];
+      activeMediaRecorder = null;
+    }
+  };
+
+  activeMediaRecorder.start();
+  btn.classList.add('is-recording');
 }
 
 /* ==================================================================
    CHAT ENGINE & CONVERSATIONAL FLOW
 =================================================================== */
 const chatLog = document.getElementById('chat-log');
+let lastConfirmedAppointment = null;   // populated by showConfirmationScreen()
 
-function initAssistantChat() {
+/* WE NEED TO MAKE A TOOL THAT TRANSLATES THE FIRST MESSAGE FOR THE
+   USER
+ */
+async function fetchTranslatedGreeting(lang) {
+  const fallback = `Hello! I'm your Cove Assistant. How can I help you today? You can book, reschedule, or ask questions in ${patientState.languageLabel}.`;
+  try {
+    const res = await fetch('http://localhost:8000/api/chat/greeting', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ preferred_language: lang }),
+    });
+    const data = await res.json();
+    return data.output_text || fallback;
+  } catch (err) {
+    return fallback;
+  }
+}
+
+async function showGreeting() {
   chatLog.innerHTML = '';
-  addBotMessage(`Hello! I'm your Cove Assistant. How can I help you today? You can book, reschedule, or ask questions in ${patientState.languageLabel}.`);
+  const greeting = await fetchTranslatedGreeting(patientState.language);
+  addBotMessage(greeting);
 }
 
 function addUserMessage(text) {
@@ -1431,7 +1669,7 @@ function addUserMessage(text) {
     <div class="bubble-col">
       <div class="bubble"><div class="bubble-text">${escapeHtml(text)}</div></div>
       <div class="bubble-meta">
-        <button class="audio-btn" onclick="tts_tool({text: '${escapeHtml(text)}', language: patientState.language})">🔊 Listen</button>
+        <button class="audio-btn" data-audio-text="${escapeHtml(text)}" onclick="playMessageAudio(this.dataset.audioText, this)">🔊 Listen</button>
       </div>
     </div>
   `;
@@ -1450,7 +1688,7 @@ function addBotMessage(text, extraHtml = '') {
         ${extraHtml ? `<div class="bubble-extra">${extraHtml}</div>` : ''}
       </div>
       <div class="bubble-meta">
-        <button class="audio-btn" onclick="tts_tool({text: '${escapeHtml(text)}', language: patientState.language})">🔊 Listen</button>
+        <button class="audio-btn" data-audio-text="${escapeHtml(text)}" onclick="playMessageAudio(this.dataset.audioText, this)">🔊 Listen</button>
       </div>
     </div>
   `;
@@ -1477,89 +1715,239 @@ function askSuggested(text) {
   processIncomingUserIntent(text);
 }
 
-/* Process incoming intent and trigger MCQ questions when booking/canceling/rescheduling */
-async function processIncomingUserIntent(text) {
-  const payload = {
-    thread_id: 'session-1',   // fine as a constant for a single-patient demo
-    message: text,
-  };
+function renderAssistantReply(data) {
+  // ------------------------------------------------------------
+  // 1. Emergency
+  // ------------------------------------------------------------
+  if (data.emergency_detected) {
+    goToEmergencyScreen(
+      data.emergency_reason || 'Emergency detected.',
+      data.output_text
+    );
+    return;
+  }
 
-  if (patientState.isLoggedIn) payload.patient_id = patientState.patientId;
-  if (patientState.isNewPatient !== null) payload.is_first_time = patientState.isNewPatient;
-  if (patientState.visitType !== null) payload.old_patient_follow_up = (patientState.visitType === 'followup');
+  // ------------------------------------------------------------
+  // 2. Normal assistant response
+  // ------------------------------------------------------------
+  if (data.output_text) {
+    addBotMessage(data.output_text);
+  }
 
-  const res = await fetch('http://localhost:8000/api/chat/message', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
-  const data = await res.json();
+  // ------------------------------------------------------------
+  // 3. New account password needed
+  // ------------------------------------------------------------
+  if (data.needs_password) {
+    const passwordHtml = `
+      <div class="password-prompt">
+        <input
+          id="chat-new-account-pass"
+          type="password"
+          placeholder="Create a password"
+        />
+        <button onclick="submitAccountPassword()">
+          Create account
+        </button>
+      </div>
+    `;
 
-  renderAssistantReply(data);
+    addBotMessage(
+      "Please create a password for your new account:",
+      passwordHtml
+    );
+  }
+
+  // ------------------------------------------------------------
+  // 4. Appointment slots
+  // ------------------------------------------------------------
+  if (Array.isArray(data.available_slots) && data.available_slots.length > 0) {
+    const slotsHtml = data.available_slots.map((slot, index) => {
+      const slotId = `slot-${Date.now()}-${index}`;
+
+      window.pendingSlots = window.pendingSlots || {};
+      window.pendingSlots[slotId] = slot;
+
+      return `
+        <button
+          class="choice-card"
+          onclick="selectSlotById('${slotId}')"
+        >
+          ${escapeHtml(slot.doctor || 'Doctor')}
+          — ${escapeHtml(slot.date || '')}
+          at ${escapeHtml(slot.time || '')}
+        </button>
+      `;
+    }).join('');
+
+    addBotMessage(
+      "Here are the available appointments:",
+      `<div class="msg-options">${slotsHtml}</div>`
+    );
+  }
+
+  // ------------------------------------------------------------
+  // 5. Existing appointments
+  // ------------------------------------------------------------
+  if (
+    Array.isArray(data.available_appointments) &&
+    data.available_appointments.length > 0
+  ) {
+    const appointmentHtml = data.available_appointments.map((appt, index) => {
+      const appointmentId = `appointment-${Date.now()}-${index}`;
+
+      window.pendingAppointments = window.pendingAppointments || {};
+      window.pendingAppointments[appointmentId] = appt;
+
+      return `
+        <button
+          class="choice-card"
+          onclick="selectAppointmentById('${appointmentId}')"
+        >
+          ${escapeHtml(appt.doctor || 'Appointment')}
+          — ${escapeHtml(appt.date || '')}
+          ${appt.time ? `at ${escapeHtml(appt.time)}` : ''}
+        </button>
+      `;
+    }).join('');
+
+    addBotMessage(
+      "Here are your appointments:",
+      `<div class="msg-options">${appointmentHtml}</div>`
+    );
+  }
+
+  // ------------------------------------------------------------
+  // 6. Appointment successfully confirmed
+  // ------------------------------------------------------------
+  if (data.confirmed_appointment) {
+    showConfirmationScreen(data.confirmed_appointment);
+  }
 }
 
-function renderAssistantReply(data) {
-  if (data.needs_password) {
-    const passwordHtml = `<div class="msg-options">
-      <input type="password" id="chat-new-account-pass" placeholder="Create a password" autocomplete="new-password">
-      <button class="choice-card" onclick="submitAccountPassword()">Continue</button>
-    </div>`;
-    addBotMessage(data.output_text, passwordHtml);
-  } else if (data.available_slots && data.available_slots.length > 0) {
-    const buttonsHtml = `<div class="msg-options">` +
-      data.available_slots.map(slot => `
-        <button class="choice-card" onclick='selectSlot(${JSON.stringify(slot)})'>
-          ${slot.doctor} — ${slot.date} at ${slot.time}
-        </button>`).join('') +
-      `</div>`;
-    addBotMessage(data.output_text, buttonsHtml);
-  } else if (data.available_appointments && data.available_appointments.length > 0) {
-    const buttonsHtml = `<div class="msg-options">` +
-      data.available_appointments.map(appt => `
-        <button class="choice-card" onclick="selectAppointment('${appt.appointment_id}')">
-          ${appt.doctor} — ${appt.date}
-        </button>`).join('') +
-      `</div>`;
-    addBotMessage(data.output_text, buttonsHtml);
-  } else {
-    addBotMessage(data.output_text);
+function selectSlotById(slotId) {
+  const slot = window.pendingSlots?.[slotId];
+
+  if (!slot) {
+    addBotMessage("Sorry, I couldn't find that appointment slot. Please try again.");
+    return;
+  }
+
+  selectSlot(slot);
+}
+
+function selectAppointmentById(appointmentId) {
+  const appointment = window.pendingAppointments?.[appointmentId];
+
+  if (!appointment) {
+    addBotMessage("Sorry, I couldn't find that appointment. Please try again.");
+    return;
+  }
+
+  selectAppointment(appointment.appointment_id);
+}
+
+/* Processes the message using the backend and triggers MCQ questions when booking*/
+async function processUserMessage(text) {
+  try {
+    const data = await apiPost('/api/chat/message', {
+      thread_id: threadId,
+      message: text,
+      is_first_time: patientState.isNewPatient === true,
+      old_patient_follow_up: patientState.visitType === 'followup',
+      patient_id: patientState.patientId,
+      preferred_language: patientState.language
+    });
+
+    renderAssistantReply(data);
+
+  } catch (err) {
+    console.error('Chat request failed:', err);
+    addBotMessage(
+      "Sorry, I couldn't reach COVE's server right now. Please try again."
+    );
   }
 }
 
 async function selectSlot(slot) {
   addUserMessage(`${slot.doctor} on ${slot.date} at ${slot.time}`);
-  const res = await fetch('http://localhost:8000/api/chat/message', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ thread_id: 'session-1', message: '', selected_slot: slot }),
-  });
-  renderAssistantReply(await res.json());
+
+  try {
+    const data = await apiPost('/api/chat/message', {
+      thread_id: threadId,
+      message: '',
+      patient_id: patientState.patientId,
+      selected_slot: slot,
+      preferred_language: patientState.language
+    });
+
+    renderAssistantReply(data);
+
+  } catch (err) {
+    console.error('Appointment selection failed:', err);
+    addBotMessage(
+      "Sorry, I couldn't confirm that appointment. Please try again."
+    );
+  }
 }
 
 async function selectAppointment(appointmentId) {
   addUserMessage('Selected that appointment.');
-  const res = await fetch('http://localhost:8000/api/chat/message', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ thread_id: 'session-1', message: '', existing_appointment_id: appointmentId }),
-  });
-  renderAssistantReply(await res.json());
+
+  try {
+    const data = await apiPost('/api/chat/message', {
+      thread_id: threadId,
+      message: '',
+      patient_id: patientState.patientId,
+      existing_appointment_id: appointmentId,
+      preferred_language: patientState.language
+    });
+
+    renderAssistantReply(data);
+
+  } catch (err) {
+    console.error('Appointment selection failed:', err);
+    addBotMessage(
+      "Sorry, I couldn't process that appointment. Please try again."
+    );
+  }
 }
+
 async function submitAccountPassword() {
   const passwordInput = document.getElementById('chat-new-account-pass');
   const password = passwordInput ? passwordInput.value : '';
+
   if (!password) return;
 
   addUserMessage('••••••••');
 
-  const res = await fetch('http://localhost:8000/api/chat/message', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ thread_id: 'session-1', message: '', new_account_password: password }),
-  });
-  renderAssistantReply(await res.json());
+  try {
+    const data = await apiPost('/api/chat/message', {
+      thread_id: threadId,
+      message: '',
+      patient_id: patientState.patientId,
+      new_account_password: password,
+      preferred_language: patientState.language
+    });
+
+    if (passwordInput) {
+      passwordInput.value = '';
+    }
+
+    renderAssistantReply(data);
+
+  } catch (err) {
+    console.error('Password submission failed:', err);
+    addBotMessage(
+      "Sorry, I couldn't finish creating your account. Please try again."
+    );
+  }
 }
 
+
+/* ==================================================================
+    MCQ's
+    Shown when the user's intent to book is detected.
+=================================================================== */
 /* MULTIPLE CHOICE QUESTION: "Are you a new patient?" */
 function askNewPatientMCQ() {
   const mcqHtml = `
@@ -1571,19 +1959,6 @@ function askNewPatientMCQ() {
   setTimeout(() => {
     addBotMessage("To proceed with your request, I need to know your patient status.", mcqHtml);
   }, 400);
-}
-
-function handleNewPatientMCQResponse(isNew) {
-  patientState.isNewPatient = isNew;
-  document.getElementById('prof-status').value = isNew ? 'New Patient' : 'Existing Patient';
-  addUserMessage(isNew ? "I am a new patient." : "I am an existing patient.");
-
-  if (!isNew) {
-    // "If they say they're an existing patient, immediately ask if it's new or old patient."
-    askVisitTypeMCQ();
-  } else {
-    continueBookingFlow();
-  }
 }
 
 /* MULTIPLE CHOICE QUESTION: "Is this a follow up or new visit?" */
@@ -1599,120 +1974,28 @@ function askVisitTypeMCQ() {
   }, 400);
 }
 
-function handleVisitTypeMCQResponse(type) {
-  patientState.visitType = type;
-  document.getElementById('prof-visit-type').value = type === 'followup' ? 'Follow-up Visit' : 'New Visit';
-  addUserMessage(type === 'followup' ? "This is a follow-up visit." : "This is a new visit.");
-  continueBookingFlow();
-}
-
-/* Single gate that every booking path (fresh intent + both MCQ
-   responses) funnels through before the appointment card is built.
-   Keeping this logic in one place is what guarantees the symptom
-   question actually fires — earlier, the two MCQ handlers above
-   called fulfillAppointmentRequest() directly and skipped it. */
-function continueBookingFlow() {
-  if (patientState.symptoms === null) {
-    askSymptomQuestion();
-    return;
-  }
-  fulfillAppointmentRequest();
-}
-
-/* Free-text question: what brings the patient in today. This is the
-   piece of information the backend RAG pipeline needs to sort the
-   patient into the right department, so it's asked for every booking
-   before we call determine_department_tool(). */
-function askSymptomQuestion() {
-  patientState.awaitingSymptoms = true;
-  setTimeout(() => {
-    addBotMessage("Before I lock in a department, what symptoms or reason for visit should I pass along? A sentence or two is perfect.");
-  }, 400);
-}
-
-function handleSymptomResponse(text) {
-  patientState.symptoms = text;
-  patientState.awaitingSymptoms = false;
-  fulfillAppointmentRequest();
-}
-
-function fulfillAppointmentRequest() {
-  setTimeout(() => {
-    // Calls backend determine_department_tool with the patient's own
-    // words — the actual symptom -> department classification happens
-    // in the existing backend RAG pipeline, not here.
-    const routed = determine_department_tool({
-      symptoms: patientState.symptoms,
-      language: patientState.language
-    });
-
-    addBotMessage("Great — here's what I've got lined up. Please confirm the details are correct before it's officially booked.", `
-      <div class="appointment-card">
-        <span class="eyebrow">Proposed appointment</span>
-        <dl>
-          <dt>Doctor</dt><dd>${escapeHtml(routed.doctor)}</dd>
-          <dt>Department</dt><dd>${escapeHtml(routed.department)}</dd>
-          <dt>When</dt><dd>${escapeHtml(routed.when)}</dd>
-        </dl>
-      </div>
-      <div class="msg-options">
-        <button class="btn btn-primary btn-block" onclick="showScreen('screen-confirmation')">✅ Confirm &amp; book appointment</button>
-      </div>
-    `);
-  }, 500);
-}
-
 /* ==================================================================
-   FILE UPLOADS & OCR INTEGRATION
+   CONFIRMATION PAGE DISPLAY
 =================================================================== */
-function triggerFileInput() {
-  document.getElementById('ocr-file-input').click();
-}
-
-function handleOcrFileUpload(event) {
-  const file = event.target.files[0];
-  if(!file) return;
-
-  // Increments translated_doc_count properly
-  patientState.translated_doc_count++;
-  document.getElementById('prof-docs').value = patientState.translated_doc_count;
-
-  addUserMessage(`[Uploaded Document: ${file.name}]`);
-
-  // Calls backend ocr_tool with translated_doc_count parameter
-  const ocrText = ocr_tool({
-    fileName: file.name,
-    translated_doc_count: patientState.translated_doc_count
-  });
-
-  setTimeout(() => {
-    addBotMessage(`I've processed your document (Document #${patientState.translated_doc_count}).`, `
-      <div style="background:var(--bg-deep); padding:12px 14px; border-radius:var(--radius-sm); font-size:13px; text-align:left;">
-        <strong>Extracted summary:</strong> ${ocrText}
-      </div>
-    `);
-  }, 600);
-}
-
-/* Voice recording toggle with sound click feedback */
-function toggleVoiceInputRecording() {
-  playAudioClickCue();
-  const btn = document.getElementById('mic-btn');
-  btn.classList.add('is-recording');
-
-  setTimeout(() => {
-    btn.classList.remove('is-recording');
-    const transcribedText = transcription_tool(null);
-    addUserMessage(transcribedText);
-    processIncomingUserIntent(transcribedText);
-  }, 1500);
+function showConfirmationScreen(appt) {
+  lastConfirmedAppointment = appt;
+  document.getElementById('conf-doctor').textContent = appt.doctor || '—';
+  document.getElementById('conf-department').textContent = appt.department || '—';
+  document.getElementById('conf-datetime').textContent =
+    (appt.date && appt.time) ? `${appt.date} at ${appt.time}` : (appt.date || '—');
+  document.getElementById('pdf-conf-code').textContent = appt.appointment_id || '—';
+  if (appt.patient_name) {
+    document.getElementById('prof-name').value = appt.patient_name;
+  }
+  showScreen('screen-confirmation');
 }
 
 /* ==================================================================
    EMERGENCY PAGE DISPLAY
 =================================================================== */
-function goToEmergencyScreen(reason) {
-  document.getElementById('emergency-output-text').textContent = "Emergency protocol triggered: Urgent attention required.";
+function goToEmergencyScreen(reason, outputText) {
+  document.getElementById('emergency-output-text').textContent =
+    outputText || "Emergency protocol triggered: Urgent attention required.";
   document.getElementById('emergency-reason-text').textContent = reason;
   showScreen('screen-emergency');
 }
@@ -1722,9 +2005,10 @@ function goToEmergencyScreen(reason) {
    Generates a downloadable PDF of confirmed appointment details.
 =================================================================== */
 function generateAppointmentPDF() {
-  const doctor = "Dr. Alana Reyes";
-  const date = "Tomorrow at 10:00 AM";
-  const code = "COVE-8842";
+  const appt = lastConfirmedAppointment || {};
+  const doctor = appt.doctor || "Dr. Alana Reyes";
+  const date = (appt.date && appt.time) ? `${appt.date} at ${appt.time}` : "Tomorrow at 10:00 AM";
+  const code = appt.appointment_id || "COVE-8842";
   const name = document.getElementById('prof-name').value || "Jane Doe";
 
   // Pure JS PDF generator using formatted PDF stream syntax

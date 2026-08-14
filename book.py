@@ -340,6 +340,7 @@ def confirm_booking(state: HospitalState) -> dict:
     confirmation = {
         "patient_id": patient_id,
         "appointment_id": appointment_id,
+        "patient_name": patient_info.get("name"),
         "doctor": slot["doctor"],
         "date": slot["date"],
         "time": slot["time"],

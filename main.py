@@ -1,11 +1,16 @@
-from fastapi import FastAPI
+import os
+import tempfile
+
+from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from typing import Optional
 from langchain_core.messages import HumanMessage
 
 from auth import register_patient, login
 from hospital_graph import graph
+from tools import ocr_tool, translate_outgoing_tool, transcription_tool, tts_tool
 
 app = FastAPI()
 
@@ -19,6 +24,12 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# tools.tts_tool writes mp3s to this directory -- mount it so the frontend
+# can just <audio src="..."> / fetch the returned URL directly, instead of
+# the backend having to read the file back and stream bytes itself.
+os.makedirs("audio_output", exist_ok=True)
+app.mount("/audio", StaticFiles(directory="audio_output"), name="audio")
 
 # ---------------------------------------------------------------------------
 # In-memory session store: hold onto state between messages instead of the 
@@ -52,6 +63,21 @@ class ChatRequest(BaseModel):
     new_account_password: Optional[str] = None
     selected_slot: Optional[dict] = None
     existing_appointment_id: Optional[str] = None
+    preferred_language: Optional[str] = None
+
+
+class GreetingRequest(BaseModel):
+    preferred_language: str
+
+
+# The exact string initAssistantChat() used to hardcode client-side in
+# shore.html. Kept here so the welcome-screen language picker can get it
+# translated before the chat even starts, instead of the first message
+# always showing up in English regardless of what the patient selected.
+DEFAULT_GREETING = (
+    "Hello! I'm your Cove Assistant. How can I help you today? "
+    "You can book, reschedule, or ask questions."
+)
 
 
 # ---------------------------------------------------------------------------
@@ -101,6 +127,12 @@ def api_chat(req: ChatRequest):
         state["selected_slot"] = req.selected_slot
     if req.existing_appointment_id is not None:
         state["existing_appointment_id"] = req.existing_appointment_id
+    # Set once, on the first turn, from the welcome-screen language picker.
+    # translate_outgoing_tool falls back to this only when detected_language
+    # isn't set yet (i.e. before the patient's own message has been through
+    # translate_incoming_tool for the first time) -- see tools.py.
+    if req.preferred_language is not None and "preferred_language" not in state:
+        state["preferred_language"] = req.preferred_language
 
     # The patient's typed message becomes a real LangChain message object --
     # translate_incoming_tool needs .content, not a plain dict.
@@ -119,9 +151,122 @@ def api_chat(req: ChatRequest):
         "available_slots": result.get("available_slots"),
         "available_appointments": result.get("available_appointments"),
         "needs_password": result.get("needs_password", False),
+        "emergency_detected": result.get("emergency_detected", False),
+        "emergency_reason": result.get("emergency_reason"),
+        "confirmed_appointment": result.get("confirmed_appointment"),
     }
+
+
+# ---------------------------------------------------------------------------
+# Greeting translation -- called once from the welcome screen after the
+# patient picks a language, so the very first message they see is already
+# in their preferred language instead of always starting in English.
+# Deliberately NOT run through the full graph: there's no patient message
+# yet to translate/mask/route, just a static string to translate outward.
+# ---------------------------------------------------------------------------
+@app.post("/api/chat/greeting")
+def api_greeting(req: GreetingRequest):
+    translated = translate_outgoing_tool({
+        "output_text": DEFAULT_GREETING,
+        "detected_language": req.preferred_language,
+    })
+    return {"output_text": translated.get("output_text", DEFAULT_GREETING)}
+
+
+# ---------------------------------------------------------------------------
+# Document upload -- OCRs the file (Azure Document Intelligence, via
+# tools.ocr_tool) and appends the extracted text onto this thread's
+# ocr_text list. Runs OUTSIDE the graph, same as tools.py documents:
+# the *next* chat turn is what actually translates + masks it (in
+# translate_incoming_tool / pii_masking_node) and feeds it to
+# document_explainer_node once the patient asks about it.
+# ---------------------------------------------------------------------------
+@app.post("/api/documents/upload")
+async def api_upload_document(thread_id: str = Form(...), file: UploadFile = File(...)):
+    suffix = os.path.splitext(file.filename or "")[1] or ".bin"
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+        tmp.write(await file.read())
+        tmp_path = tmp.name
+
+    try:
+        extracted_text = ocr_tool(tmp_path)
+    except Exception as e:
+        return {"success": False, "reason": f"Couldn't read that document: {e}"}
+    finally:
+        os.remove(tmp_path)
+
+    state = SESSIONS.get(thread_id, {"thread_id": thread_id, "patient_info": {}})
+    state.setdefault("ocr_text", [])
+    state["ocr_text"].append(extracted_text)
+    SESSIONS[thread_id] = state
+
+    return {"success": True, "doc_count": len(state["ocr_text"])}
+
+# ---------------------------------------------------------------------------
+# Reset conversation session
+# ---------------------------------------------------------------------------
+@app.post("/api/session/reset")
+async def reset_session(thread_id: str):
+    SESSIONS.pop(thread_id, None)
+
+    return {
+        "success": True
+    }
+
+
+class TTSRequest(BaseModel):
+    text: str
+    language: Optional[str] = "en"
+
+
+# ---------------------------------------------------------------------------
+# Voice input -- transcribes a recorded audio clip (Deepgram Nova 3, via
+# tools.transcription_tool). Runs OUTSIDE the graph, triggered directly by
+# the mic button in shore.html. DOES NOT touch session state itself -- the
+# transcript comes back to the frontend, which sends it into
+# /api/chat/message exactly like a typed message.
+# ---------------------------------------------------------------------------
+@app.post("/api/audio/transcribe")
+async def api_transcribe_audio(audio: UploadFile = File(...)):
+    suffix = os.path.splitext(audio.filename or "")[1] or ".webm"
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+        tmp.write(await audio.read())
+        tmp_path = tmp.name
+
+    try:
+        transcript = transcription_tool(tmp_path, content_type=audio.content_type or "audio/webm")
+    except Exception as e:
+        return {"success": False, "reason": f"Couldn't transcribe that: {e}"}
+    finally:
+        os.remove(tmp_path)
+
+    return {"success": True, "transcript": transcript}
+
+
+# ---------------------------------------------------------------------------
+# Text-to-speech -- synthesizes a chat bubble's text (Google Cloud TTS, via
+# tools.tts_tool). Runs OUTSIDE the graph, triggered by the 🔊 Listen button
+# on any bubble. tts_tool expects state-shaped kwargs, so it's called with a
+# minimal dict rather than the full session state.
+# ---------------------------------------------------------------------------
+@app.post("/api/audio/tts")
+def api_tts(req: TTSRequest):
+    if not req.text.strip():
+        return {"success": False, "reason": "No text to speak."}
+
+    try:
+        result = tts_tool({"output_text": req.text, "detected_language": req.language})
+    except Exception as e:
+        return {"success": False, "reason": f"Couldn't generate audio: {e}"}
+
+    audio_path = result.get("output_audio_url")
+    if not audio_path:
+        return {"success": False, "reason": "Couldn't generate audio."}
+
+    return {"success": True, "audio_url": f"/audio/{os.path.basename(audio_path)}"}
 
 
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
+
