@@ -14,6 +14,43 @@ load_dotenv()
 GEMINI_KEY = os.getenv("flash_key")
 client = genai.Client(api_key=GEMINI_KEY)
 
+# Centralized so a future model swap is a one-line change instead of a
+# find-and-replace across every node.
+GEMINI_MODEL = "gemini-3.5-flash-lite"
+
+# Shown to the patient (translated like any other output_text) whenever a
+# Gemini call fails outright -- quota exhausted, timeout, network error,
+# malformed response, etc. Keeps a single bad API call from surfacing as a
+# raw 500 / "Failed to fetch" in the browser.
+GEMINI_ERROR_TEXT = (
+    "Sorry, I'm having trouble processing that right now. Please try again "
+    "in a moment, or call our front desk directly if it's urgent."
+)
+
+
+def _safe_generate_content(**kwargs):
+    """Wraps client.models.generate_content so a Gemini-side failure (quota,
+    timeout, malformed schema response, etc.) never becomes an unhandled
+    exception that 500s the whole /api/chat/message request. Returns the
+    response object on success, or None on failure -- callers check for
+    None and fall back to GEMINI_ERROR_TEXT."""
+    try:
+        return client.models.generate_content(**kwargs)
+    except Exception as e:
+        print(f"[Gemini call failed] {e}")
+        return None
+
+
+def _recent_history(state: HospitalState) -> str:
+    """Formats the last few turns of conversation_log for inclusion in a
+    prompt. Returns "" (not a placeholder string) when there's no history
+    yet, so first-turn prompts don't have to special-case an awkward
+    "(no history)" line."""
+    log = state.get("conversation_log", [])
+    if not log:
+        return ""
+    return "Recent conversation so far:\n" + "\n".join(log) + "\n"
+
 
 def intake_node(state: HospitalState) -> dict:
     updates = translate_incoming_tool(state)
@@ -25,19 +62,23 @@ def intake_node(state: HospitalState) -> dict:
 # Intake router + Process patient's message + Guardrail check + Emergency Check
 # Extracts and updates state
 # -----------------------------------------------------------------------------
-SYSTEM_PROMPT = """You are an information collector and safety monitor for a \
-hospital front desk assistant. Given the patient's message, determine:
- 
+SYSTEM_PROMPT = """You are the front desk assistant for a hospital -- warm, \
+efficient, and human, the way a good in-person receptionist is. You are \
+also this turn's information collector and safety monitor. Given the \
+recent conversation and the patient's newest message, determine:
+
 1. intent -- what the patient is trying to do (book/cancel/reschedule an \
    appointment, ask about hospital policy, or get a document explained, or other).
 2. guardrail_triggered -- true if the message asks for a medical diagnosis, \
    asks something unrelated to the hospital (e.g. general trivia), or \
    otherwise falls outside what a hospital front desk assistant should \
-   answer. If true, also write a short, polite output_text redirecting \
-   the patient (e.g. "I can't provide a diagnosis, but I can help you book \
-   an appointment with a doctor who can."). Also make true if the message \
-   contains any swear words, threats, and/or hate speech.
-3. 3. emergency_detected -- true if the message suggests a potential medical \
+   answer. Also true if the message contains swear words, threats, and/or \
+   hate speech. If true, write output_text: a short, warm redirect in your \
+   own words -- vary the phrasing turn to turn, don't reuse the same \
+   sentence you've used earlier in this conversation. Acknowledge what \
+   they actually asked before redirecting, don't just paste a generic \
+   disclaimer.
+3. emergency_detected -- true if the message suggests a potential medical \
    emergency (severe pain, difficulty breathing, heavy bleeding, chest pain, \
    suicidal ideation, etc). Err on the side of caution.
 4. emergency_reason -- if emergency_detected is true, briefly state in one \
@@ -49,27 +90,41 @@ hospital front desk assistant. Given the patient's message, determine:
    to seek immediate medical attention. Do not offer appointment \
    scheduling. Keep it under 80 words.
 6. symptoms -- if the patient describes a new medical concern, summarize it \
-   briefly while combining it with any existing symptom information. \
-   Otherwise leave null.
+   briefly while combining it with any existing symptom information from \
+   the conversation so far. Otherwise leave null.
 7. requested_doctor_name -- any specifically named doctor the patient requests. \
    Otherwise leave null.
 8. patient_info -- any personal/insurance details mentioned THIS message \
    only. Leave fields null if not mentioned -- do not guess or fill in \
-   placeholder values.
+   placeholder values. Check the recent conversation first: if the patient \
+   already gave a field earlier in this session, don't ask for it again \
+   and don't flag it as newly mentioned unless they're correcting it.
+
+Use the recent conversation to stay consistent -- don't contradict, repeat \
+verbatim, or ask again for something already covered earlier in this \
+session.
 """
 def intent_guardrail_extraction_node(state: HospitalState) -> dict:
     text = state.get("masked_text", "")
+    history = _recent_history(state)
 
-    response = client.models.generate_content(
-        model="gemini-3.6-flash",
-        contents=f"{SYSTEM_PROMPT}\n\nPatient message:\n{text}",
+    response = _safe_generate_content(
+        model=GEMINI_MODEL,
+        contents=f"{SYSTEM_PROMPT}\n\n{history}Patient's newest message:\n{text}",
         config={
             "response_mime_type": "application/json",
             "response_schema": IntentAndExtraction,
         },
     )
 
-    result: IntentAndExtraction = response.parsed
+    # response.parsed can come back None even on a "successful" call, if
+    # Gemini's output didn't cleanly match IntentAndExtraction. Treat that
+    # the same as a hard failure rather than letting result.intent etc.
+    # below throw an AttributeError.
+    result: IntentAndExtraction = response.parsed if response else None
+    if result is None:
+        return {"output_text": GEMINI_ERROR_TEXT, "status": "blocked"}
+
     updates: dict = {
         "intent": result.intent,
         "guardrail_triggered": result.guardrail_triggered,
@@ -122,22 +177,30 @@ def route_intent(state: HospitalState) -> str:
 def document_explainer_node(state: HospitalState) -> dict:
     document_content = state.get("masked_document_text", "")
     patient_question = state.get("masked_text", "")
+    history = _recent_history(state)
 
     prompt = f"""A patient has uploaded a medical document and is asking \
     about it. Explain the relevant contents in clear, simple, patient-friendly \
-    language. Avoid jargon, and define any medical terms you must use. Do not \
-    diagnose or add medical advice beyond what's written in the document.
+    language, like a caring front desk staffer walking them through it out \
+    loud -- not a form letter. Avoid jargon, and define any medical terms \
+    you must use. Do not diagnose or add medical advice beyond what's \
+    written in the document. If the recent conversation shows they already \
+    asked about part of this document, build on that instead of repeating \
+    your earlier explanation.
 
+    {history}
     Document content:
     {document_content}
 
     Patient's question:
     {patient_question if patient_question else "(No specific question -- give a general explanation of the document.)"}"""
 
-    response = client.models.generate_content(
-        model="gemini-3.6-flash",
+    response = _safe_generate_content(
+        model=GEMINI_MODEL,
         contents=prompt,
     )
+    if response is None:
+        return {"output_text": GEMINI_ERROR_TEXT, "status": "complete"}
 
     return {"output_text": response.text.strip(), "status": "complete"}
 
@@ -147,23 +210,29 @@ def document_explainer_node(state: HospitalState) -> dict:
 # ---------------------------------------------------------------------------
 def hospital_policy(state: HospitalState) -> dict:
   question = state.get("masked_text", "")
+  history = _recent_history(state)
   chunks = retrieve(question, top_k=3)
   context = "\n\n---\n\n".join(chunks)
   prompt = f"""
-    You are a hospital policy assistant.
-    Answer the user's question ONLY using the hospital policy below.
-    If the answer cannot be found in the policy, respond:
-      "I couldn't find that information in our hospital policy."
+    You are a hospital front desk assistant answering a policy question.
+    Answer the patient's question ONLY using the hospital policy below,
+    but say it the way a helpful staffer would explain it out loud --
+    plain language, not a copy-pasted policy excerpt. If the recent
+    conversation already covered related ground, build on it naturally
+    instead of re-explaining from scratch.
+    If the answer cannot be found in the policy, say so plainly, in your
+    own words -- don't always use the identical sentence every time.
 
     Rules:
-    - Use ONLY the retrieved hospital policy.
-    - Do not use outside medical knowledge.
-    - If the answer is partially available, answer only the supported portion.
-    - If the answer isn't in the retrieved policy, explicitly say you couldn't find it.
-    - DO NOT share any information that can be confidential for hospital, patient, or staff information.
-      Reply with "Sorry, I cannot provide that information." if the question is about confidential information.
-    - Never invent hospital policies.
+    - Use ONLY the retrieved hospital policy below -- never outside medical
+      knowledge, and never invented policy.
+    - If the answer is only partially available, answer the supported
+      portion and say what you couldn't confirm.
+    - DO NOT share anything confidential about the hospital, patients, or
+      staff. If the question is about confidential information, decline
+      clearly but politely, in your own words.
 
+    {history}
     Hospital Policy: {context}
 
     Question: {question}
@@ -171,10 +240,17 @@ def hospital_policy(state: HospitalState) -> dict:
     Answer:
     """
 
-  response = client.models.generate_content(
-    model="gemini-3.6-flash",
+  response = _safe_generate_content(
+    model=GEMINI_MODEL,
     contents=prompt,
-)
+  )
+  if response is None:
+    return {
+        "output_text": GEMINI_ERROR_TEXT,
+        "retrieved_chunks": chunks,
+        "status": "complete",
+    }
+
   return {
      "output_text": response.text.strip(),
      "retrieved_chunks": chunks,
@@ -188,15 +264,24 @@ def hospital_policy(state: HospitalState) -> dict:
 # not off-topic/diagnosis requests.
 # ---------------------------------------------------------------------------
 def other_intent_node(state: HospitalState) -> dict:
-    response = client.models.generate_content(
-        model="gemini-3.6-flash",
+    history = _recent_history(state)
+    response = _safe_generate_content(
+        model=GEMINI_MODEL,
         contents=(
-            "You are a hospital front desk assistant. Respond helpfully and "
-            "briefly to this message, and if relevant, remind the patient "
-            "you can help them book appointments, answer policy questions, "
-            f"or explain documents.\n\nMessage: {state.get('masked_text', '')}"
+            "You are a hospital front desk assistant. Respond naturally and "
+            "briefly to this message, like a real receptionist chatting with "
+            "someone at the desk. Only mention that you can help book "
+            "appointments, answer policy questions, or explain documents if "
+            "it's genuinely relevant right now -- check the recent "
+            "conversation first, and don't repeat that reminder if you've "
+            "already said it earlier in this session.\n\n"
+            f"{history}"
+            f"Patient's newest message: {state.get('masked_text', '')}"
         ),
     )
+    if response is None:
+        return {"output_text": GEMINI_ERROR_TEXT, "status": "complete"}
+
     return {"output_text": response.text, "status": "complete"}
 
 

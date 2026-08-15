@@ -1,4 +1,5 @@
 import os
+import pickle
 import tempfile
 
 from fastapi import FastAPI, UploadFile, File, Form
@@ -14,14 +15,6 @@ from tools import ocr_tool, translate_outgoing_tool, transcription_tool, tts_too
 app = FastAPI()
 from fastapi.middleware.cors import CORSMiddleware
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
 # CORS: the browser blocks fetch() calls to a different origin/port by
 # default. This tells the browser "it's fine, let shore.html talk to me."
 # allow_origins=["*"] is fine for local testing -- you'd lock this down
@@ -29,6 +22,7 @@ app.add_middleware(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -40,10 +34,39 @@ os.makedirs("audio_output", exist_ok=True)
 app.mount("/audio", StaticFiles(directory="audio_output"), name="audio")
 
 # ---------------------------------------------------------------------------
-# In-memory session store: hold onto state between messages instead of the 
-# graph doing it automatically. Resets every time the server restarts.
+# Session store: holds onto state between messages instead of the graph
+# doing it automatically. Persisted to disk (pickle, not JSON -- session
+# state holds LangChain message objects, not just plain JSON-safe data) so
+# a server restart or an uvicorn --reload cycle mid-conversation doesn't
+# silently wipe every active patient's session (that was the cause of the
+# "greeting repeats" / "keeps re-asking for insurance" bugs -- the graph
+# was starting fresh every time the process restarted).
 # ---------------------------------------------------------------------------
-SESSIONS: dict = {}
+SESSIONS_FILE = "sessions.pkl"
+
+
+def _load_sessions() -> dict:
+    if not os.path.exists(SESSIONS_FILE):
+        return {}
+    try:
+        with open(SESSIONS_FILE, "rb") as f:
+            return pickle.load(f)
+    except Exception as e:
+        # Corrupt/unreadable session file shouldn't take the whole server
+        # down -- just start fresh, same as if it never existed.
+        print(f"[sessions] couldn't load {SESSIONS_FILE}, starting fresh: {e}")
+        return {}
+
+
+def _save_sessions() -> None:
+    try:
+        with open(SESSIONS_FILE, "wb") as f:
+            pickle.dump(SESSIONS, f)
+    except Exception as e:
+        print(f"[sessions] couldn't save {SESSIONS_FILE}: {e}")
+
+
+SESSIONS: dict = _load_sessions()
 
 
 # ---------------------------------------------------------------------------
@@ -143,13 +166,31 @@ def api_chat(req: ChatRequest):
         state["preferred_language"] = req.preferred_language
 
     # The patient's typed message becomes a real LangChain message object --
-    # translate_incoming_tool needs .content, not a plain dict.
-    state["messages"] = [HumanMessage(content=req.message)]
+    # translate_incoming_tool needs .content, not a plain dict. APPEND,
+    # don't overwrite: state["messages"] used to be reset to a single-item
+    # list every turn, which silently threw away the whole conversation on
+    # every request -- that's why nothing the model generated ever
+    # reflected earlier turns.
+    state.setdefault("messages", [])
+    state["messages"].append(HumanMessage(content=req.message))
+    state["messages"] = state["messages"][-20:]  # keep the session lean
 
     result = graph.invoke(state)
 
     # Merge this turn's updates into the saved session for next time.
     state.update(result)
+
+    # Log this turn (PII-masked patient side, translated assistant side) so
+    # the Gemini-calling nodes in nodes.py can see recent conversation
+    # context on the *next* turn, instead of only ever seeing the current
+    # message in isolation. Kept short (last ~6 exchanges) so it doesn't
+    # balloon the prompt or the token bill.
+    patient_line = state.get("masked_text") or req.message
+    assistant_line = result.get("output_text")
+    log_additions = [f"Patient: {patient_line}"]
+    if assistant_line:
+        log_additions.append(f"Assistant: {assistant_line}")
+    state["conversation_log"] = (state.get("conversation_log", []) + log_additions)[-12:]
     if result.get("status") == "complete":
         for key in (
             "selected_slot", "available_slots", "available_appointments",
@@ -160,6 +201,7 @@ def api_chat(req: ChatRequest):
             state.pop(key, None)
 
     SESSIONS[req.thread_id] = state
+    _save_sessions()
 
     # Only send back what the frontend actually needs to render.
     return {
@@ -216,6 +258,7 @@ async def api_upload_document(thread_id: str = Form(...), file: UploadFile = Fil
     state.setdefault("ocr_text", [])
     state["ocr_text"].append(extracted_text)
     SESSIONS[thread_id] = state
+    _save_sessions()
 
     return {"success": True, "doc_count": len(state["ocr_text"])}
 
@@ -225,6 +268,7 @@ async def api_upload_document(thread_id: str = Form(...), file: UploadFile = Fil
 @app.post("/api/session/reset")
 async def reset_session(thread_id: str):
     SESSIONS.pop(thread_id, None)
+    _save_sessions()
 
     return {
         "success": True
@@ -286,4 +330,3 @@ def api_tts(req: TTSRequest):
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
-

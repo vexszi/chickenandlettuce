@@ -33,6 +33,30 @@ load_dotenv()
 GEMINI_KEY = os.getenv("flash_key")
 client = genai.Client(api_key=GEMINI_KEY)
 
+# Same model + safety net as nodes.py. Kept as a local copy rather than
+# importing from nodes.py to avoid a circular import (nodes.py imports
+# book_appointment_flow from this file).
+GEMINI_MODEL = "gemini-3.5-flash-lite"
+
+
+def _safe_generate_content(**kwargs):
+    """See nodes.py -- catches Gemini failures instead of letting them
+    bubble up as an unhandled exception that kills the whole booking
+    request (this was previously unguarded here, unlike every Gemini call
+    in nodes.py)."""
+    try:
+        return client.models.generate_content(**kwargs)
+    except Exception as e:
+        print(f"[Gemini call failed in book.py] {e}")
+        return None
+
+
+def _recent_history(state: HospitalState) -> str:
+    log = state.get("conversation_log", [])
+    if not log:
+        return ""
+    return "Recent conversation so far:\n" + "\n".join(log) + "\n"
+
 
 # ---------------------------------------------------------------------------
 # Figures out which of your 3 flows we're in.
@@ -67,19 +91,30 @@ def _init_checklist(state: HospitalState) -> dict:
 # Same LLM prompt as your pasted patient_info() -- turns a list of missing
 # things into one natural question, asking for up to 2 at a time.
 # ---------------------------------------------------------------------------
-def _ask_for(missing: list[str]) -> str:
+def _ask_for(missing: list[str], state: HospitalState) -> str:
     to_ask = missing[:2]
+    history = _recent_history(state)
     prompt = f"""
-    You are a hospital receptionist.
-    Generate ONE natural message asking the patient for the following missing information ONLY:
-    {to_ask}
+    You are a hospital receptionist mid-conversation with a patient you're
+    already talking to -- not greeting them for the first time.
+    Generate ONE natural message asking for the following missing
+    information ONLY: {to_ask}
 
     Rules
     - Ask naturally for all items above, in one short friendly message.
     - Do NOT mention or ask about anything not in the list above.
+    - Do NOT open with "Hello" or re-introduce yourself -- check the recent
+      conversation below and continue naturally, the way a person mid-chat
+      would, not the way you'd open a brand new conversation.
     - Return ONLY the message.
+
+    {history}
     """
-    response = client.models.generate_content(model="gemini-3.6-flash", contents=prompt)
+    response = _safe_generate_content(model=GEMINI_MODEL, contents=prompt)
+    if response is None:
+        # Deterministic fallback so a Gemini hiccup doesn't crash the whole
+        # booking flow -- plain but functional.
+        return f"Could you also share your {' and '.join(to_ask)}?"
     return response.text.strip()
 
 
@@ -113,7 +148,7 @@ def _handle_followup(state: HospitalState, checklist: dict) -> dict:
     if missing:
         return {
             "booking_checklist": checklist,
-            "output_text": _ask_for(missing),
+            "output_text": _ask_for(missing, state),
             "status": "awaiting_input",
         }
 
@@ -153,7 +188,7 @@ def _handle_new_or_returning(state: HospitalState, checklist: dict, patient_type
     checklist["symptoms_and_gender"] = bool(state.get("symptoms"))
 
     if missing:
-        message = _ask_for(missing)
+        message = _ask_for(missing, state)
         if not checklist.get("gender_mentioned"):
             message += " If you have a preference for a male or female doctor, feel free to mention it -- totally optional."
             checklist["gender_mentioned"] = True
@@ -235,9 +270,34 @@ def _decide_department(state: HospitalState) -> dict:
     Return ONLY JSON in this shape:
     {{"department": ""}}
     """
-    response = client.models.generate_content(model="gemini-3.6-flash", contents=prompt)
-    result = json.loads(response.text.strip())
-    return {"department": result.get("department")}
+    response = _safe_generate_content(model=GEMINI_MODEL, contents=prompt)
+    if response is None:
+        # Gemini call failed outright -- fall back to the first department
+        # alphabetically rather than crashing the booking flow.
+        return {"department": departments[0] if departments else None}
+
+    raw = response.text.strip()
+    # Gemini sometimes wraps JSON in ```json ... ``` fences despite being
+    # asked for raw JSON -- strip those before parsing so this doesn't
+    # throw and take the whole request down with it.
+    if raw.startswith("```"):
+        raw = raw.strip("`")
+        if raw.startswith("json"):
+            raw = raw[4:]
+        raw = raw.strip()
+
+    try:
+        result = json.loads(raw)
+        department = result.get("department")
+    except (json.JSONDecodeError, AttributeError):
+        department = None
+
+    if department not in departments:
+        # Model returned something outside the known list (or failed to
+        # parse) -- fall back rather than storing a bogus department.
+        department = departments[0] if departments else None
+
+    return {"department": department}
 
 
 def find_available_slots(state: HospitalState) -> list[dict]:

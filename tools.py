@@ -58,9 +58,18 @@ def translate_incoming_tool(state: HospitalState) -> dict:
             updates["translated_text"] = message_text
             updates["detected_language"] = "en"
         else:
-            result = translate_client.translate(message_text, target_language="en")
-            updates["translated_text"] = result["translatedText"]
-            updates["detected_language"] = result["detectedSourceLanguage"]
+            try:
+                result = translate_client.translate(message_text, target_language="en")
+                updates["translated_text"] = result["translatedText"]
+                updates["detected_language"] = result["detectedSourceLanguage"]
+            except Exception as e:
+                # Translate API failure (quota/auth/network) shouldn't crash
+                # the whole turn -- fall back to using the raw text as-is.
+                # Downstream will treat it as English; not ideal for a
+                # non-English patient, but far better than a hard failure.
+                print(f"[translate_incoming_tool] message translation failed: {e}")
+                updates["translated_text"] = message_text
+                updates["detected_language"] = "en"
 
     doc_list = state.get("ocr_text", [])
     already_translated = state.get("translated_doc_count", 0)
@@ -71,9 +80,14 @@ def translate_incoming_tool(state: HospitalState) -> dict:
             updates["translated_document_text"] = new_doc
             updates.setdefault("detected_language", "en")
         else:
-            result = translate_client.translate(new_doc, target_language="en")
-            updates["translated_document_text"] = result["translatedText"]
-            updates.setdefault("detected_language", result["detectedSourceLanguage"])
+            try:
+                result = translate_client.translate(new_doc, target_language="en")
+                updates["translated_document_text"] = result["translatedText"]
+                updates.setdefault("detected_language", result["detectedSourceLanguage"])
+            except Exception as e:
+                print(f"[translate_incoming_tool] document translation failed: {e}")
+                updates["translated_document_text"] = new_doc
+                updates.setdefault("detected_language", "en")
         updates["translated_doc_count"] = len(doc_list)
 
     return updates
@@ -96,9 +110,14 @@ def translate_outgoing_tool(state: HospitalState) -> dict:
     if not text:
         return {}
 
-    result = translate_client.translate(text, target_language=target_lang)
-
-    return {"output_text": result["translatedText"]}
+    try:
+        result = translate_client.translate(text, target_language=target_lang)
+        return {"output_text": result["translatedText"]}
+    except Exception as e:
+        # Better to show the patient the English response than to crash
+        # the request and show them nothing at all.
+        print(f"[translate_outgoing_tool] translation failed: {e}")
+        return {}
 
 
 # ---------------------------------------------------------------------------

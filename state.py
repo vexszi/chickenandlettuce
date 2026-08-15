@@ -30,7 +30,14 @@ class HospitalState(TypedDict):
 
     # --- conversation ---
     messages: Annotated[list, add_messages]
-    conversation_summary: str
+    # Rolling log of the conversation so far, PII-masked patient turns and
+    # translated assistant turns, e.g. "Patient: ...", "Assistant: ...".
+    # Every Gemini-calling node in nodes.py reads the tail of this to give
+    # the model actual short-term memory -- without it, every prompt only
+    # ever saw the current message in isolation (that was the cause of
+    # answers feeling hardcoded/repetitive/context-blind). Trimmed to the
+    # last N entries in main.py after each turn so it doesn't grow forever.
+    conversation_log: Annotated[list[str], operator.add]
     preferred_language: str
     detected_language: Optional[str]
 
