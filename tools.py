@@ -131,7 +131,7 @@ def transcription_tool(audio_path: str, content_type: str = "audio/wav") -> str:
         "Authorization": f"Token {NOVA3_KEY}",
         "Content-Type": content_type,
     }
-    params = {"model": "nova-3", "smart_format": "true"}
+    params = {"model": "nova-3", "smart_format": "true", "language": "multi" }
 
     with open(audio_path, "rb") as f:
         audio_bytes = f.read()

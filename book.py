@@ -176,8 +176,6 @@ def _handle_new_or_returning(state: HospitalState, checklist: dict, patient_type
             pii_missing.append("email address")
         if not info.get("insurance_provider") or not info.get("insurance_id"):
             pii_missing.append("insurance information")
-        if not state.get("new_account_password"):
-            pii_missing.append("a password for your account")
 
         checklist["pii_collection"] = len(pii_missing) == 0
         missing += pii_missing
@@ -307,72 +305,74 @@ def find_available_slots(state: HospitalState) -> list[dict]:
     gender_pref = state.get("patient_info", {}).get("gender_pref")
     requested_doctor = state.get("requested_doctor_name")
 
-    # Step 1: filter by department
     filtered = {name: info for name, info in doctors.items()
                 if info["department"] == department}
 
-    # Step 2: filter by gender preference, if one was given
     if gender_pref and gender_pref.lower() not in ("no preference", "none"):
         filtered = {name: info for name, info in filtered.items()
                     if info["gender"] == gender_pref.lower()}
 
-    # Step 3: narrow to a specifically requested doctor, if named and still in the list
     if requested_doctor and requested_doctor in filtered:
         filtered = {requested_doctor: filtered[requested_doctor]}
 
     if not filtered:
-        return []  # caller will turn this into the "call front desk" message
+        return []
 
-    results = []
-
-    for doctor_name, info in filtered.items():
-        availability = info["availability"]
-        booked_times = [
+    # Precompute each doctor's booked times once, instead of re-querying
+    # get_doctor_appointments() inside the day loop like before.
+    booked_by_doctor = {
+        name: [
             datetime.strptime(a["date"], "%Y-%m-%d %H:%M")
-            for a in get_doctor_appointments(doctor_name)
+            for a in get_doctor_appointments(name)
         ]
+        for name in filtered
+    }
 
-        current_day = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=2)
-        found_slot = None
-        days_checked = 0
-        MAX_DAYS = 90  # safety cap so this can't search forever
+    current_day = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=2)
+    results = []
+    days_checked = 0
+    MAX_DAYS = 90
+    NUM_SLOTS = 3
 
-        while found_slot is None and days_checked < MAX_DAYS:
-            day_name = DAY_NAMES[current_day.weekday()]
+    while len(results) < NUM_SLOTS and days_checked < MAX_DAYS:
+        day_name = DAY_NAMES[current_day.weekday()]
+        best_for_day = None  # (slot_start, doctor_name) -- earliest across all qualifying doctors THIS day
 
-            if day_name in availability:
-                work_start = datetime.strptime(availability[day_name]["start"], "%H:%M").time()
-                work_end = datetime.strptime(availability[day_name]["end"], "%H:%M").time()
-                slot_start = datetime.combine(current_day, work_start)
-                day_end = datetime.combine(current_day, work_end)
+        for doctor_name, info in filtered.items():
+            availability = info["availability"]
+            if day_name not in availability:
+                continue
 
-                while slot_start + timedelta(minutes=45) <= day_end:
-                    slot_end = slot_start + timedelta(minutes=45)
+            work_start = datetime.strptime(availability[day_name]["start"], "%H:%M").time()
+            work_end = datetime.strptime(availability[day_name]["end"], "%H:%M").time()
+            slot_start = datetime.combine(current_day, work_start)
+            day_end = datetime.combine(current_day, work_end)
+            booked_times = booked_by_doctor[doctor_name]
 
-                    # true overlap check -- catches partial overlaps too
-                    overlap = any(
-                        slot_start < (appt_start + timedelta(minutes=45)) and appt_start < slot_end
-                        for appt_start in booked_times
-                    )
+            while slot_start + timedelta(minutes=45) <= day_end:
+                slot_end = slot_start + timedelta(minutes=45)
+                overlap = any(
+                    slot_start < (appt_start + timedelta(minutes=45)) and appt_start < slot_end
+                    for appt_start in booked_times
+                )
+                if not overlap:
+                    if best_for_day is None or slot_start < best_for_day[0]:
+                        best_for_day = (slot_start, doctor_name)
+                    break  # earliest opening for this doctor today -- move to next doctor
+                slot_start += timedelta(minutes=45)
 
-                    if not overlap:
-                        found_slot = slot_start
-                        break
-
-                    slot_start += timedelta(minutes=45)
-
-            current_day += timedelta(days=1)
-            days_checked += 1
-
-        if found_slot:
+        if best_for_day:
+            slot_start, doctor_name = best_for_day
             results.append({
                 "doctor": doctor_name,
-                "date": found_slot.strftime("%Y-%m-%d"),
-                "time": found_slot.strftime("%H:%M"),
+                "date": slot_start.strftime("%Y-%m-%d"),
+                "time": slot_start.strftime("%H:%M"),
             })
 
-    results.sort(key=lambda r: datetime.strptime(f"{r['date']} {r['time']}", "%Y-%m-%d %H:%M"))
-    return results[:3]
+        current_day += timedelta(days=1)
+        days_checked += 1
+
+    return results
 
 
 
@@ -422,7 +422,8 @@ def confirm_booking(state: HospitalState) -> dict:
             appointment_time=slot["time"],
         )
         email_sent = True
-    except Exception:
+    except Exception as e:
+        print(f"[confirm_booking] email send failed: {e}")
         email_sent = False
 
     if not email_sent:

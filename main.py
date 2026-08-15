@@ -8,6 +8,9 @@ from pydantic import BaseModel
 from typing import Optional
 from langchain_core.messages import HumanMessage
 
+import threading
+from collections import defaultdict
+
 from auth import register_patient, login
 from hospital_graph import graph
 from tools import ocr_tool, translate_outgoing_tool, transcription_tool, tts_tool
@@ -134,6 +137,13 @@ def api_login(req: LoginRequest):
     return {"success": True, "patientId": record["patient_id"]}
 
 
+
+_lock_creation_lock = threading.Lock()
+_thread_locks: dict[str, threading.Lock] = {}
+
+def _get_thread_lock(thread_id: str) -> threading.Lock:
+    with _lock_creation_lock:
+        return _thread_locks.setdefault(thread_id, threading.Lock())
 # ---------------------------------------------------------------------------
 # The main conversation endpoint -- this is what replaces
 # processIncomingUserIntent()'s fake regex logic in shore.html.
@@ -197,6 +207,7 @@ def api_chat(req: ChatRequest):
             "booking_checklist", "department", "requested_doctor_name",
             "existing_appointment_id", "held_appointment_id",
             "confirmed_appointment", "symptoms",
+            "new_account_password",
         ):
             state.pop(key, None)
 

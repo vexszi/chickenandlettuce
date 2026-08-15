@@ -53,6 +53,7 @@ class HospitalState(TypedDict):
     masked_text: str
     pii_map: dict
     masked_document_text: Optional[str]
+    translated_document_text: Optional[str]   # <-- add this
 
     # --- routing ---
     intent: Literal[
@@ -82,6 +83,7 @@ class HospitalState(TypedDict):
     department: Optional[str]
     requested_doctor_name: Optional[str]   # was doctor_preference -- now ONLY a specifically named doctor request
     booking_checklist: dict[str, bool]
+    needs_password: Optional[bool]
 
     existing_appointment_id: Optional[str]   #appointment currently being cancelled or rescheduled
     held_appointment_id: Optional[str]     #new slot for rescheduling

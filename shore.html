@@ -1610,74 +1610,51 @@ async function toggleVoiceInputRecording() {
     }
   };
 
-  activeMediaRecorder.onstop = async () => {
+ activeMediaRecorder.onstop = async () => {
     btn.classList.remove('is-recording');
 
-    // Stop using the microphone immediately.
     if (activeMicStream) {
       activeMicStream.getTracks().forEach(track => track.stop());
       activeMicStream = null;
     }
 
     const mimeType = activeMediaRecorder.mimeType || 'audio/webm';
-
-    const blob = new Blob(activeAudioChunks, {
-      type: mimeType
-    });
-
+    const blob = new Blob(activeAudioChunks, { type: mimeType });
     const extension = mimeType.includes('ogg') ? 'ogg' : 'webm';
-
     const formData = new FormData();
-
-    formData.append(
-      'audio',
-      blob,
-      `recording.${extension}`
-    );
+    formData.append('audio', blob, `recording.${extension}`);
 
     addBotMessage("I'm transcribing that…");
 
     try {
-      const res = await fetch(
-        `${API_BASE_URL}/api/audio/transcribe`,
-        {
-          method: 'POST',
-          body: formData
-        }
-      );
-
+      const res = await fetch(`${API_BASE_URL}/api/audio/transcribe`, {
+        method: 'POST',
+        body: formData
+      });
       const result = await res.json();
 
       if (!res.ok || !result.success || !result.transcript) {
-        throw new Error(
-          result.reason || 'Transcription failed.'
-        );
+        throw new Error(result.reason || 'Transcription failed.');
       }
 
       const transcript = result.transcript.trim();
-
       if (!transcript) {
-        addBotMessage(
-          "I couldn't hear anything clearly. Please try again."
-        );
+        addBotMessage("I couldn't hear anything clearly. Please try again.");
         return;
       }
 
-      // Treat the transcript exactly like typed text.
+      if (chatBusy) return;               // <-- guard belongs here
       addUserMessage(transcript);
       await processUserMessage(transcript);
 
     } catch (err) {
       console.error('Transcription failed:', err);
-
-      addBotMessage(
-        "Sorry, I couldn't transcribe that. Please try again or type your message."
-      );
+      addBotMessage("Sorry, I couldn't transcribe that. Please try again or type your message.");
     } finally {
       activeAudioChunks = [];
       activeMediaRecorder = null;
     }
-  };
+};
 
   activeMediaRecorder.start();
   btn.classList.add('is-recording');

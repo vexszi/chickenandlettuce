@@ -77,7 +77,13 @@ recent conversation and the patient's newest message, determine:
    own words -- vary the phrasing turn to turn, don't reuse the same \
    sentence you've used earlier in this conversation. Acknowledge what \
    they actually asked before redirecting, don't just paste a generic \
-   disclaimer.
+   disclaimer. If the patient has an uploaded document available and their question is
+   asking what that document says (e.g. "what's my prescription," "how do I
+   take this medication," "what does this say") -- this is a document lookup,
+   not a diagnosis request. Do NOT set guardrail_triggered for these; classify
+   intent as document_explainer instead. Only trigger the guardrail for
+   medical advice or diagnosis requests that are NOT grounded in something
+   the patient has already provided.
 3. emergency_detected -- true if the message suggests a potential medical \
    emergency (severe pain, difficulty breathing, heavy bleeding, chest pain, \
    suicidal ideation, etc). Err on the side of caution.
@@ -158,6 +164,7 @@ def intent_guardrail_extraction_node(state: HospitalState) -> dict:
         }
 
         updates["patient_info"] = {**existing, **unmasked_fields}
+        updates["needs_password"] = False
 
     return updates
 
