@@ -29,22 +29,16 @@ def get_gmail_service():
             with open("token.json", "w") as token:
                 token.write(creds.to_json())
         else:
-            # IMPORTANT: don't launch an interactive browser OAuth flow
-            # from inside a live request (confirm_booking() in book.py
-            # calls this synchronously while a patient is waiting on a
-            # response -- InstalledAppFlow.run_local_server() would spin
-            # up a local HTTP server and block that request thread
-            # indefinitely waiting on a browser that no one is looking
-            # at). Do the one-time interactive auth ahead of time instead:
-            #   python mcp_server/test_mcp.py --send
-            # which will open the consent screen once and write token.json.
-            raise RuntimeError(
-                "No valid Gmail token.json found. Run "
-                "`python mcp_server/test_mcp.py --send` once from the repo "
-                "root (with credentials.json present) to complete the "
-                "interactive OAuth consent and cache token.json. "
-                "Do not attempt interactive auth from a live server request."
+            if not os.path.exists("credentials.json"):
+                raise RuntimeError(
+                    "No token.json and no credentials.json found. "
+                    "Download your OAuth client secret from Google Cloud "
+                    "Console and place it at credentials.json in the repo root."
+                )
+            flow = InstalledAppFlow.from_client_secrets_file(
+                "credentials.json", SCOPES
             )
+            creds = flow.run_local_server(port=0)
 
     return build("gmail", "v1", credentials=creds)
 
@@ -62,7 +56,7 @@ def send_confirmation_email(
     message = EmailMessage()
 
     message["To"] = patient_email
-    message["Subject"] = "Hospital Appointment Confirmation"
+    message["Subject"] = "Appointment Confirmation"
 
     message.set_content(
         f"""Hello {patient_name},
@@ -74,7 +68,7 @@ Date: {appointment_date}
 Time: {appointment_time}
 
 Thank you,
-Hospital Appointment System
+Cove Assistant
 """
     )
 

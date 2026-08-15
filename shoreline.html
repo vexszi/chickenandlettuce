@@ -1541,7 +1541,7 @@ async function login_patient(params) {
 
   return {
     patientId: data.patientId,
-    patient: data.patient,
+    patientInfo: data.patientInfo,
     success: data.success,
     reason: data.reason
   };
@@ -1567,7 +1567,7 @@ async function submitExistingLogin() {
       showLoginError(result.reason || "We couldn't find an account with that email and password.");
       return;
     }
-    completeLogin(false, result.patientId, result.patient);
+    completeLogin(false, result.patientId, result.patientInfo);
   } catch (err) {
     showLoginError('Something went wrong reaching the server. Please try again.');
   } finally {
@@ -1579,6 +1579,7 @@ function completeLogin(isNewPatient, patientId, patient) {
   patientState.isLoggedIn = true;
   patientState.isNewPatient = isNewPatient;
   patientState.patientId = patientId;   // <-- new
+  patientState.patientInfo = patientInfo || null
   document.getElementById('prof-status').value = isNewPatient ? 'New Patient' : 'Existing Patient';
   document.getElementById('prof-patient-id').value = patientId || 'Not set';
 
@@ -2267,6 +2268,7 @@ async function processUserMessage(text) {
       thread_id: threadId,
       message: text,
       patient_id: patientState.patientId,
+      patient_info: patientState.patientInfo,
       preferred_language: patientState.language,
     };
     if (patientState.isNewPatient !== null) payload.is_first_time = patientState.isNewPatient === true;

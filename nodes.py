@@ -166,6 +166,15 @@ def intent_guardrail_extraction_node(state: HospitalState) -> dict:
         updates["patient_info"] = {**existing, **unmasked_fields}
         updates["needs_password"] = False
 
+        # A late-arriving gender preference or named-doctor request should
+        # invalidate any slots we already computed under the old filters --
+        # otherwise the patient's new preference is silently ignored.
+        if "gender_pref" in unmasked_fields and unmasked_fields["gender_pref"] != existing.get("gender_pref"):
+            updates["available_slots"] = None
+
+    if result.requested_doctor_name and result.requested_doctor_name != state.get("requested_doctor_name"):
+        updates["available_slots"] = None
+
     return updates
 
 
@@ -291,13 +300,6 @@ def other_intent_node(state: HospitalState) -> dict:
 
     return {"output_text": response.text, "status": "complete"}
 
-
-# ---------------------------------------------------------------------------
-# Runs every turn, last. Translates output_text back to the patient's
-# detected language (no-ops if already English).
-# ---------------------------------------------------------------------------
-def final_response_node(state: HospitalState) -> dict:
-    return translate_outgoing_tool(state)
 
 # ----------------------------------------------------------------------------
 # Book Appointment
@@ -442,3 +444,10 @@ def reschedule_appointment(state: HospitalState) -> dict:
         "status": "complete",
         "held_appointment_id": new_appt
     }
+
+# ---------------------------------------------------------------------------
+# Runs every turn, last. Translates output_text back to the patient's
+# detected language (no-ops if already English).
+# ---------------------------------------------------------------------------
+def final_response_node(state: HospitalState) -> dict:
+    return translate_outgoing_tool(state)

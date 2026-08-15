@@ -211,6 +211,10 @@ tempCodeRunnerFile.py
 
 credentials.json
 
+token.json
+patients.json
+appointments.json
+
 # Session store (pickled patient conversation state -- not for version control)
 sessions.pkl
 

@@ -94,6 +94,7 @@ class ChatRequest(BaseModel):
     is_first_time: Optional[bool] = None
     old_patient_follow_up: Optional[bool] = None
     patient_id: Optional[str] = None
+    patient_info: Optional[dict] = None   # <-- add this
     new_account_password: Optional[str] = None
     selected_slot: Optional[dict] = None
     existing_appointment_id: Optional[str] = None
@@ -134,16 +135,13 @@ def api_login(req: LoginRequest):
     record = login(req.email, req.password)
     if record is None:
         return {"success": False, "reason": "Invalid email or password."}
-    return {"success": True, "patientId": record["patient_id"]}
+    return {
+        "success": True,
+        "patientId": record["patient_id"],
+        "patientInfo": record,  # name, email, phone, dob, insurance, etc.
+    }
 
 
-
-_lock_creation_lock = threading.Lock()
-_thread_locks: dict[str, threading.Lock] = {}
-
-def _get_thread_lock(thread_id: str) -> threading.Lock:
-    with _lock_creation_lock:
-        return _thread_locks.setdefault(thread_id, threading.Lock())
 # ---------------------------------------------------------------------------
 # The main conversation endpoint -- this is what replaces
 # processIncomingUserIntent()'s fake regex logic in shore.html.
@@ -162,6 +160,8 @@ def api_chat(req: ChatRequest):
         state["old_patient_follow_up"] = req.old_patient_follow_up
     if req.patient_id is not None:
         state["patient_id"] = req.patient_id
+    if req.patient_info is not None:
+        state["patient_info"] = {**req.patient_info, **state.get("patient_info", {})}
     if req.new_account_password is not None:
         state["new_account_password"] = req.new_account_password
     if req.selected_slot is not None:

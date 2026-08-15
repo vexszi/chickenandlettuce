@@ -221,7 +221,11 @@ def _handle_new_or_returning(state: HospitalState, checklist: dict, patient_type
     
         # Step 5: waiting on patient to actually pick a slot
     if not state.get("selected_slot"):
-        return {"booking_checklist": checklist, "status": "awaiting_input"}
+        return {
+            "booking_checklist": checklist,
+            "output_text": "Please choose one of the appointment times above.",
+            "status": "awaiting_input",
+        }
 
     # Step 5.5: a brand-new patient (no patient_id yet) needs a password
     # before we can create their account.
@@ -434,6 +438,8 @@ def confirm_booking(state: HospitalState) -> dict:
     "confirmed_appointment": confirmation,
     "output_text": message,
     "status": "complete",
+    "available_slots": None,
+    "available_appointments": None,
 }
 
 def book_appointment_flow(state: HospitalState) -> dict:
