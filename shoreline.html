@@ -1,0 +1,2613 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>cove — AI Hospital Front Desk</title>
+
+<!-- ================================================================
+     FONTS & STYLESHEET
+     Display face: Fraunces (serif for headlines)
+     Body face: Inter (clean readable UI font)
+     Mono face: IBM Plex Mono (for timestamps and systemic data)
+================================================================= -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+<style>
+/* ================================================================
+   1. DESIGN SYSTEM & TOKENS
+   Color scheme based on serene teal navy (cove/harbor theme).
+   Coral accent reserved strictly for emergency state.
+================================================================= */
+:root {
+  --bg:            #F4F8F7;
+  --bg-deep:       #E7EFEE;
+  --ink:           #16323E;
+  --ink-soft:      #52707B;
+  --line:          #CFDEDD;
+  --teal:          #2C6E7F;
+  --teal-deep:     #1E4E5B;
+  --teal-tint:     #DCEAEA;
+  --seaglass:      #6FA98B;
+  --seaglass-tint: #E1EFE6;
+  --sand:          #D8CDB8;
+  --coral:         #D9634F;
+  --coral-deep:    #B94A39;
+  --coral-tint:    #FBE6E2;
+  --white:         #FFFFFF;
+
+  --font-display: 'Fraunces', Georgia, serif;
+  --font-body:    'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono:    'IBM Plex Mono', 'Courier New', monospace;
+
+  --radius-lg: 28px;
+  --radius-md: 18px;
+  --radius-sm: 10px;
+  --shadow-soft: 0 8px 30px rgba(22,50,62,0.08);
+  --shadow-lift: 0 14px 40px rgba(22,50,62,0.14);
+}
+
+/* Base reset */
+*, *::before, *::after { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; padding: 0; }
+body {
+  font-family: var(--font-body);
+  color: var(--ink);
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+}
+button { font-family: inherit; cursor: pointer; }
+input, select, textarea { font-family: inherit; font-size: inherit; }
+h1, h2, h3, p { margin: 0; }
+
+/* Accessibility Focus */
+:focus-visible {
+  outline: 3px solid var(--teal);
+  outline-offset: 2px;
+}
+
+/* Container shell.
+   NOTE: scrollbar-gutter:stable deliberately is NOT set here (or on
+   html/body) — #app itself rarely scrolls (screen-main manages its
+   own internal scrolling instead), so reserving a gutter at this
+   level just leaves a permanent blank strip down the right edge and
+   pulls full-width bars in short of the true edge of the screen.
+   The gutter is reserved only on the specific inner panels that
+   actually scroll and change height (chat-log, the T&C box, the
+   profile panel) — see those rules further down. */
+#app {
+  position: relative;
+  height: 100vh;
+  height: 100dvh;
+  width: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.screen {
+  display: none;
+  min-height: 100vh;
+  width: 100%;
+  animation: tide-in 350ms ease;
+}
+.screen.is-active {
+  display: flex;
+  flex-direction: column;
+}
+
+@keyframes tide-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* ================================================================
+   2. TYPOGRAPHY & COMMON LAYOUT COMPONENTS
+================================================================= */
+.center-column {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 32px 24px;
+  text-align: center;
+}
+.stack { display: flex; flex-direction: column; gap: 14px; width: 100%; max-width: 460px; }
+.eyebrow {
+  font-family: var(--font-mono); font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--teal);
+}
+h1.display { font-family: var(--font-display); font-weight: 600; font-size: clamp(28px, 5vw, 38px); line-height: 1.15; }
+h2.display { font-family: var(--font-display); font-weight: 600; font-size: clamp(22px, 4vw, 28px); line-height: 1.2; }
+p.lede { color: var(--ink-soft); font-size: 15px; line-height: 1.6; max-width: 460px; }
+
+/* Welcome screen's headline is the one place we spend a bold,
+   attention-grabbing treatment: a slow-drifting gradient fill that
+   echoes the header accent line and the wave motif. */
+#screen-welcome h1.display {
+  background: linear-gradient(100deg, var(--teal-deep), var(--teal) 45%, var(--seaglass) 70%, var(--teal-deep));
+  background-size: 250% 100%;
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+  animation: headline-shimmer 7s ease-in-out infinite;
+}
+@keyframes headline-shimmer { 0%,100% { background-position: 0% 0; } 50% { background-position: 100% 0; } }
+@media (prefers-reduced-motion: reduce) { #screen-welcome h1.display { animation: none; } }
+
+/* Buttons */
+.btn {
+  border: none; border-radius: 999px; padding: 14px 26px;
+  font-weight: 600; font-size: 15px;
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  transition: transform 160ms ease, background 160ms ease, box-shadow 160ms ease, background-position 400ms ease;
+  position: relative;
+}
+.btn:active { transform: scale(0.98); }
+.btn-primary {
+  background: linear-gradient(135deg, var(--teal) 0%, var(--teal-deep) 100%);
+  background-size: 160% 160%; background-position: 0% 0%;
+  color: var(--white); box-shadow: 0 6px 20px rgba(30,78,91,0.28);
+}
+.btn-primary:hover { background-position: 100% 100%; box-shadow: 0 8px 26px rgba(30,78,91,0.38); transform: translateY(-1px); }
+.btn-primary:disabled { background: var(--line); color: var(--ink-soft); cursor: not-allowed; transform: none; box-shadow: none; }
+.btn-ghost { background: transparent; color: var(--teal); border: 1.5px solid var(--line); }
+.btn-ghost:hover { border-color: var(--teal); background: var(--teal-tint); transform: translateY(-1px); }
+.btn-block { width: 100%; }
+.btn-emergency {
+  background: linear-gradient(135deg, var(--coral) 0%, var(--coral-deep) 100%);
+  color: var(--white); box-shadow: 0 6px 18px rgba(217,99,79,0.35);
+}
+.btn-emergency:hover { background: linear-gradient(135deg, var(--coral-deep) 0%, var(--coral) 100%); transform: translateY(-1px); }
+
+/* Form inputs */
+.field { text-align: left; width: 100%; }
+.field label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 6px; color: var(--ink-soft); }
+.field input, .field select {
+  width: 100%; padding: 12px 14px; border-radius: var(--radius-sm);
+  border: 1.5px solid var(--line); background: var(--white);
+  font-size: 15px; color: var(--ink);
+}
+.field input:focus, .field select:focus { border-color: var(--teal); outline: none; }
+
+/* Scrollable T&C Box */
+.tc-scroll-box {
+  width: 100%;
+  max-height: 180px;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+  background: var(--white);
+  border: 1.5px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 14px;
+  text-align: left;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ink-soft);
+  margin-bottom: 12px;
+}
+.tc-scroll-box p + p { margin-top: 8px; }
+.tc-checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-align: left;
+  font-size: 13.5px;
+  font-weight: 500;
+  margin-bottom: 16px;
+  cursor: pointer;
+}
+.tc-checkbox-row input { width: 18px; height: 18px; accent-color: var(--teal); cursor: pointer; }
+
+/* Choice Cards (Multiple Choice Buttons) */
+.choice-card {
+  display: flex; align-items: center; gap: 14px;
+  width: 100%; text-align: left;
+  padding: 14px 18px; border-radius: var(--radius-md);
+  border: 1.5px solid var(--line); background: var(--white);
+  transition: border-color 120ms ease, background 120ms ease, transform 120ms ease, box-shadow 120ms ease;
+  margin-top: 8px;
+  animation: bubble-in 320ms cubic-bezier(0.2,0.7,0.3,1) both;
+}
+.choice-card:hover { border-color: var(--teal); background: var(--teal-tint); transform: translateY(-1px); box-shadow: var(--shadow-soft); }
+.choice-card:active { transform: translateY(0) scale(0.99); }
+.choice-card.is-selected { border-color: var(--teal); background: var(--teal-tint); font-weight: 600; }
+.msg-options .choice-card:nth-child(1) { animation-delay: 60ms; }
+.msg-options .choice-card:nth-child(2) { animation-delay: 130ms; }
+.msg-options .choice-card:nth-child(3) { animation-delay: 200ms; }
+
+/* Welcome screen — soft drifting color blobs behind the card give
+   the entry point some life without distracting from the terms
+   checkbox / language picker, which stay in a solid-opacity layer
+   on top. */
+#screen-welcome { position: relative; overflow: hidden; }
+#screen-welcome::before,
+#screen-welcome::after {
+  content: ''; position: absolute; border-radius: 50%; filter: blur(60px);
+  opacity: 0.55; z-index: 0; pointer-events: none;
+  animation: welcome-drift 16s ease-in-out infinite alternate;
+}
+#screen-welcome::before { width: 320px; height: 320px; background: var(--teal-tint); top: -90px; left: -90px; }
+#screen-welcome::after  { width: 280px; height: 280px; background: var(--seaglass-tint); bottom: -100px; right: -70px; animation-delay: -8s; }
+#screen-welcome .center-column { position: relative; z-index: 1; }
+#screen-welcome .center-column > .brand-logo-hero { animation: welcome-logo-float 3.2s ease-in-out infinite; }
+.brand-logo-hero { width: 72px; height: 72px; object-fit: contain; display: block; margin: 0 auto; }
+@keyframes welcome-drift {
+  from { transform: translate(0,0) scale(1); }
+  to   { transform: translate(28px, 18px) scale(1.18); }
+}
+@keyframes welcome-logo-float {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(-6px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  #screen-welcome::before, #screen-welcome::after, #screen-welcome .center-column > .brand-logo-hero { animation: none; }
+}
+
+/* Quick-start chips fade/slide in with a light stagger the moment
+   the main interface appears, rather than just snapping into place. */
+.quick-chip {
+  animation: bubble-in 360ms cubic-bezier(0.2,0.7,0.3,1) both;
+}
+.quick-chip:nth-child(1) { animation-delay: 60ms; }
+.quick-chip:nth-child(2) { animation-delay: 120ms; }
+.quick-chip:nth-child(3) { animation-delay: 180ms; }
+.quick-chip:nth-child(4) { animation-delay: 240ms; }
+.quick-chip:nth-child(5) { animation-delay: 300ms; }
+
+/* ================================================================
+   3. MAIN INTERFACE & SIDEBAR LAYOUT
+   The app uses a toggleable sidebar on the main screen.
+================================================================= */
+.main-layout {
+  display: flex;
+  height: 100vh;
+  height: 100dvh;
+  width: 100%;
+  overflow: hidden;
+  position: relative;
+}
+
+/* Sidebar Styles */
+.sidebar {
+  width: 320px;
+  background: var(--white);
+  border-right: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  transition: transform 250ms ease, margin-left 250ms ease;
+  z-index: 40;
+  flex-shrink: 0;
+  overflow: hidden;
+}
+.sidebar.is-collapsed {
+  margin-left: -320px;
+}
+
+.sidebar-header {
+  padding: 20px;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: linear-gradient(180deg, var(--teal-tint) 0%, var(--white) 100%);
+}
+.sidebar-header .brand {
+  display: flex; align-items: center; gap: 10px;
+  font-family: var(--font-display); font-weight: 600; font-size: 20px;
+}
+.brand-logo-small { width: 24px; height: 24px; object-fit: contain; }
+.sidebar-header .brand .brand-logo-small { animation: welcome-logo-float 3.4s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { .sidebar-header .brand .brand-logo-small { animation: none; } }
+
+/* Login / Create account — lives in the chat header now, not the
+   sidebar. The sidebar can be collapsed at any time, which used to
+   hide auth entirely; the header is always on screen, so this is
+   the one place it's guaranteed to be visible without being the
+   first/biggest thing a patient sees on load. */
+.header-auth-btn {
+  display: flex; align-items: center; gap: 7px;
+  background: var(--teal); color: var(--white); border: none;
+  border-radius: 999px; padding: 9px 16px 9px 14px;
+  font-size: 13px; font-weight: 700; white-space: nowrap;
+  box-shadow: 0 4px 14px rgba(44,110,127,0.28);
+  transition: transform 150ms ease, box-shadow 150ms ease, background 150ms ease;
+}
+.header-auth-btn:hover { background: var(--teal-deep); transform: translateY(-1px); box-shadow: 0 6px 18px rgba(44,110,127,0.38); }
+.header-auth-dot {
+  width: 7px; height: 7px; border-radius: 50%; background: #fff;
+  animation: auth-dot-pulse 1.8s ease-in-out infinite;
+}
+@keyframes auth-dot-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
+.header-auth-chip {
+  display: none;
+  align-items: center; gap: 7px;
+  background: var(--seaglass-tint); color: var(--teal-deep);
+  border-radius: 999px; padding: 9px 14px;
+  font-size: 13px; font-weight: 700; white-space: nowrap;
+}
+@media (max-width: 560px) {
+  .header-auth-btn .header-auth-label-full { display: none; }
+}
+
+/* Main Content Shell */
+.main-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  position: relative;
+}
+
+.chat-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 20px; border-bottom: 1px solid var(--line);
+  background: var(--white);
+  position: relative;
+}
+/* Thin gradient accent along the bottom edge — a quiet signature
+   line that echoes the wave motif without adding another animation
+   to a bar that's meant to stay calm and legible. */
+.chat-header::after {
+  content: ''; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px;
+  background: linear-gradient(90deg, var(--teal) 0%, var(--seaglass) 50%, var(--teal) 100%);
+  background-size: 200% 100%;
+  animation: header-accent-drift 8s linear infinite;
+}
+@keyframes header-accent-drift { from { background-position: 0% 0; } to { background-position: 200% 0; } }
+@media (prefers-reduced-motion: reduce) { .chat-header::after { animation: none; } }
+.sidebar-toggle-btn {
+  background: var(--bg-deep); border: 1px solid var(--line);
+  border-radius: var(--radius-sm); padding: 8px 12px;
+  font-size: 14px; display: flex; align-items: center; gap: 6px;
+  font-weight: 600; color: var(--ink);
+}
+.sidebar-toggle-btn:disabled {
+  opacity: 0.5; cursor: not-allowed;
+}
+
+.chat-log {
+  flex: 1;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  background:
+    radial-gradient(circle at 1px 1px, rgba(44,110,127,0.07) 1px, transparent 0) 0 0/22px 22px,
+    var(--bg);
+}
+
+/* Custom scrollbars — thin, teal-tinted, matching the brand instead
+   of the browser default grey everywhere something scrolls. */
+.chat-log, .profile-panel-scroll, .tc-scroll-box {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line) transparent;
+}
+.chat-log::-webkit-scrollbar, .profile-panel-scroll::-webkit-scrollbar, .tc-scroll-box::-webkit-scrollbar { width: 8px; }
+.chat-log::-webkit-scrollbar-track, .profile-panel-scroll::-webkit-scrollbar-track, .tc-scroll-box::-webkit-scrollbar-track { background: transparent; }
+.chat-log::-webkit-scrollbar-thumb, .profile-panel-scroll::-webkit-scrollbar-thumb, .tc-scroll-box::-webkit-scrollbar-thumb {
+  background: var(--line); border-radius: 999px;
+}
+.chat-log::-webkit-scrollbar-thumb:hover, .profile-panel-scroll::-webkit-scrollbar-thumb:hover, .tc-scroll-box::-webkit-scrollbar-thumb:hover {
+  background: var(--teal);
+}
+
+/* Chat Bubbles */
+.bubble-row { display: flex; gap: 10px; max-width: 82%; animation: bubble-in 320ms cubic-bezier(0.2,0.7,0.3,1) both; }
+@keyframes bubble-in {
+  from { opacity: 0; transform: translateY(10px) scale(0.98); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+@media (prefers-reduced-motion: reduce) { .bubble-row { animation: none; } }
+.bubble-row.from-user { align-self: flex-end; flex-direction: row-reverse; }
+.bubble-row.from-bot { align-self: flex-start; }
+.avatar {
+  width: 32px; height: 32px; border-radius: 50%; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--teal); color: var(--white); font-size: 14px; font-weight: 700;
+}
+.bubble-row.from-user .avatar { background: var(--ink-soft); }
+.avatar-bot { background: var(--white); border: 1.5px solid var(--teal-tint); padding: 4px; }
+.avatar-bot img { width: 100%; height: 100%; object-fit: contain; }
+.bubble-col { display: flex; flex-direction: column; gap: 4px; }
+.bubble {
+  padding: 13px 16px; border-radius: var(--radius-md);
+  font-size: 14.5px; line-height: 1.55;
+  box-shadow: 0 1px 2px rgba(22,50,62,0.04);
+}
+.bubble-row.from-bot .bubble { background: var(--white); border: 1px solid var(--line); border-top-left-radius: 4px; }
+.bubble-row.from-user .bubble { background: var(--teal); color: var(--white); border-top-right-radius: 4px; box-shadow: none; }
+
+/* ==================================================================
+   THINKING / PROCESSING INDICATOR — the signature "the assistant is
+   working" moment. Shown as a transient bot bubble any time we're
+   waiting on the backend, so waiting never looks like nothing is
+   happening: a sonar ping for a normal reply, a scanning document
+   for reading an upload, a waveform for transcribing voice — each
+   paired with status text that visibly cycles through a couple of
+   phrases rather than sitting frozen on one word. Removed the
+   instant the real reply is rendered.
+=================================================================== */
+.bubble-thinking {
+  display: flex; align-items: center; gap: 12px;
+  padding: 13px 18px;
+}
+.think-label {
+  font-size: 13.5px; font-weight: 600; color: var(--ink-soft);
+  animation: think-label-in 260ms ease both;
+}
+@keyframes think-label-in { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: translateY(0); } }
+
+/* The bot avatar gets a soft breathing glow while it's "alive" and
+   working — quiets down the moment the row is removed. */
+.avatar-thinking { position: relative; animation: avatar-breathe 1.8s ease-in-out infinite; }
+@keyframes avatar-breathe {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(44,110,127,0.35); }
+  50%      { box-shadow: 0 0 0 8px rgba(44,110,127,0); }
+}
+
+/* Sonar ping — default "thinking" icon */
+.think-icon-sonar { position: relative; width: 22px; height: 22px; flex-shrink: 0; }
+.think-icon-sonar .think-ring {
+  position: absolute; inset: 0; border-radius: 50%;
+  border: 2px solid var(--teal); opacity: 0;
+  animation: sonar-ping 1.8s ease-out infinite;
+}
+.think-icon-sonar .think-ring:nth-child(2) { animation-delay: 0.6s; }
+.think-icon-sonar .think-dot {
+  position: absolute; top: 50%; left: 50%; width: 8px; height: 8px;
+  margin: -4px 0 0 -4px; border-radius: 50%; background: var(--teal-deep);
+}
+@keyframes sonar-ping {
+  0%   { transform: scale(0.3); opacity: 0.9; }
+  100% { transform: scale(1.7); opacity: 0; }
+}
+
+/* Scanning document — "reading an upload" icon */
+.think-icon-scan {
+  position: relative; width: 22px; height: 22px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 13px; overflow: hidden; border-radius: 5px;
+  background: var(--teal-tint);
+}
+.think-icon-scanline {
+  position: absolute; left: 2px; right: 2px; height: 2px; top: 3px;
+  background: var(--teal); border-radius: 1px;
+  box-shadow: 0 0 6px 1px rgba(44,110,127,0.6);
+  animation: scan-sweep 1.6s ease-in-out infinite;
+}
+@keyframes scan-sweep {
+  0%, 100% { top: 3px; opacity: 0.9; }
+  50%      { top: 17px; opacity: 0.5; }
+}
+
+/* Waveform bars — "transcribing voice" icon */
+.think-icon-wave { display: flex; align-items: flex-end; gap: 2.5px; width: 22px; height: 20px; flex-shrink: 0; }
+.think-icon-wave span {
+  width: 3px; background: var(--teal); border-radius: 2px;
+  transform-origin: bottom; animation: wave-bounce 1s ease-in-out infinite;
+}
+.think-icon-wave span:nth-child(1) { animation-delay: 0s;    height: 40%; }
+.think-icon-wave span:nth-child(2) { animation-delay: 0.12s; height: 70%; }
+.think-icon-wave span:nth-child(3) { animation-delay: 0.24s; height: 100%; }
+.think-icon-wave span:nth-child(4) { animation-delay: 0.36s; height: 60%; }
+.think-icon-wave span:nth-child(5) { animation-delay: 0.48s; height: 85%; }
+@keyframes wave-bounce { 0%, 100% { transform: scaleY(0.4); } 50% { transform: scaleY(1); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .avatar-thinking, .think-icon-sonar .think-ring, .think-icon-scanline, .think-icon-wave span, .think-label {
+    animation: none;
+  }
+}
+
+/* Anything attached to a bot message beyond plain text — MCQ
+   options, an appointment summary card, an OCR result — renders in
+   its own block below the text, each item stacked with consistent
+   spacing, so nothing ever runs together on one line. */
+.bubble-extra { margin-top: 10px; display: flex; flex-direction: column; gap: 8px; }
+.msg-options { display: flex; flex-direction: column; gap: 8px; }
+.msg-options .choice-card { margin-top: 0; }
+.bubble-extra-label { font-weight: 600; margin-bottom: 2px; }
+
+/* Small "appointment summary" card used for the pre-confirmation
+   review shown in chat, before the patient taps the final Confirm
+   button — kept visually distinct from the plain-text reply. */
+.appointment-card {
+  width: 100%; background: var(--white); border: 1px solid var(--line);
+  border-radius: var(--radius-md); padding: 14px 16px; text-align: left;
+}
+.appointment-card dl { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; margin: 8px 0 0; }
+.appointment-card dt {
+  font-family: var(--font-mono); font-size: 11px; color: var(--ink-soft);
+  text-transform: uppercase; letter-spacing: 0.03em; align-self: center;
+}
+.appointment-card dd { margin: 0; font-weight: 600; font-size: 13.5px; }
+
+.bubble-meta { display: flex; align-items: center; gap: 8px; margin-top: 2px; }
+.audio-btn {
+  display: flex; align-items: center; gap: 6px;
+  border: none; background: none; padding: 2px 4px;
+  font-family: var(--font-mono); font-size: 11px; color: var(--ink-soft);
+}
+.audio-btn { transition: color 120ms ease, transform 120ms ease; }
+.audio-btn:hover { color: var(--teal); transform: scale(1.03); }
+.audio-btn:active { transform: scale(0.97); }
+.audio-btn.is-playing { color: var(--teal-deep); font-weight: 600; }
+
+/* Suggested-question chips — sit above the composer, separated by
+   their own hairline + label so they read as a distinct "quick
+   start" tray rather than clutter jammed against the input box.
+   Horizontally scrollable so the row never wraps and pushes the
+   composer down. Edges fade so the scroll affordance is obvious
+   without needing a visible scrollbar. */
+.quick-actions-wrap {
+  border-top: 1px solid var(--line);
+  background: var(--bg-deep);
+  padding: 6px 0 8px;
+}
+.quick-actions-label {
+  font-size: 11px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
+  color: var(--ink-soft); padding: 0 20px 8px;
+}
+.quick-actions {
+  display: flex; gap: 10px; overflow-x: auto;
+  padding: 6px 20px 6px;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  mask-image: linear-gradient(to right, transparent 0, black 20px, black calc(100% - 20px), transparent 100%);
+}
+.quick-actions::-webkit-scrollbar { display: none; }
+.quick-chip {
+  flex-shrink: 0; background: var(--white); border: 1px solid var(--line);
+  border-radius: 999px; padding: 9px 16px; font-size: 13px; font-weight: 600;
+  color: var(--teal-deep); white-space: nowrap; box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+  transition: border-color 120ms ease, background 120ms ease, transform 120ms ease;
+}
+.quick-chip:hover { border-color: var(--teal); background: var(--teal-tint); transform: scale(1.03); }
+
+/* Composer Bar */
+.composer {
+  border-top: 1px solid var(--line);
+  background: var(--white);
+  padding: 12px 20px;
+}
+.composer-row { display: flex; align-items: center; gap: 8px; }
+.icon-btn {
+  width: 40px; height: 40px; border-radius: 50%; border: 1px solid var(--line);
+  background: var(--bg-deep); display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+.icon-btn:hover { border-color: var(--teal); }
+.icon-btn.is-recording { background: var(--coral-tint); border-color: var(--coral); animation: rec-pulse 1s infinite; }
+@keyframes rec-pulse { 0%,100% { box-shadow: 0 0 0 0 rgba(217,99,79,0.4); } 50% { box-shadow: 0 0 0 8px rgba(217,99,79,0); } }
+
+.composer input[type="text"] {
+  flex: 1; border: 1.5px solid var(--line); border-radius: 999px;
+  padding: 10px 18px; font-size: 14.5px;
+}
+.send-btn {
+  width: 40px; height: 40px; border-radius: 50%; border: none; background: var(--teal); color: var(--white);
+  display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+}
+
+/* ================================================================
+   4. PATIENT INFO PANEL
+   Lives inside <aside class="sidebar"> and stays visible at all
+   times — this is the app's only source of information
+   verification, so it should never require a tab switch to see.
+================================================================= */
+.sidebar-profile-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+.profile-panel-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+  padding: 20px 18px 8px;
+}
+.profile-panel-title {
+  font-family: var(--font-display); font-weight: 600; font-size: 19px;
+  margin-bottom: 4px;
+}
+.profile-panel-note {
+  font-size: 12px; line-height: 1.5; color: var(--ink-soft); margin-bottom: 16px;
+}
+
+.profile-card {
+  background: var(--bg); border: 1px solid var(--line); border-radius: var(--radius-md);
+  padding: 16px 16px 4px; margin-bottom: 16px; width: 100%;
+}
+.profile-card h4 {
+  font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.05em; text-transform: uppercase;
+  color: var(--teal-deep); margin-bottom: 6px;
+}
+.profile-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 10px 0; border-bottom: 1px solid var(--line);
+}
+.profile-row:last-child { border-bottom: none; }
+.profile-row .field-label { font-size: 12.5px; color: var(--ink-soft); flex-shrink: 0; }
+.profile-row input[readonly] {
+  border: none; background: transparent; text-align: right; color: var(--ink);
+  font-weight: 600; font-size: 13px; padding: 0; min-width: 0;
+}
+
+/* ================================================================
+   5. LOGIN — FULL-SCREEN INTERFACE (not a popup)
+   Covers the entire viewport like any other .screen, styled to
+   match the rest of the app's onboarding screens (same .field /
+   .stack / .btn treatment). It's shown/hidden directly rather than
+   swapped via showScreen(), since it needs to lie "on top of" the
+   main interface and disappear back to it on successful login,
+   without disturbing whatever screen-main was doing underneath.
+================================================================= */
+.login-interface-overlay {
+  position: fixed; inset: 0; z-index: 100;
+  background: var(--bg);
+  display: none;
+  flex-direction: column;
+  overflow-y: auto;
+}
+.login-interface-overlay.is-visible { display: flex; }
+.login-interface-topbar {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 20px clamp(20px,6vw,64px);
+}
+.login-interface-topbar .brand {
+  display: flex; align-items: center; gap: 10px;
+  font-family: var(--font-display); font-weight: 600; font-size: 20px;
+}
+
+/* Generic small confirm modal (used for "start over") — a compact
+   popup card is the right shape for a quick yes/no, unlike the
+   full-screen login interface above. */
+.confirm-modal-overlay {
+  position: fixed; inset: 0; z-index: 100;
+  background: rgba(22, 50, 62, 0.6);
+  display: none; align-items: center; justify-content: center;
+  padding: 20px;
+}
+.confirm-modal-overlay.is-visible { display: flex; }
+.confirm-modal-card {
+  background: var(--white); border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lift); width: 100%; max-width: 400px;
+  padding: 28px; text-align: center;
+}
+
+/* Water-fill "start over" transition. A fixed, full-screen, click-
+   through overlay: two wave layers slide up from the bottom to cover
+   the screen (the reset itself happens the instant it's fully
+   covered, hidden from view), then the whole thing fades + blurs
+   away. Kept to two simple keyframes so it stays quick and calm
+   rather than a showy animation. */
+.water-transition-overlay {
+  position: fixed; inset: 0; z-index: 500;
+  pointer-events: none;
+  opacity: 0;
+}
+.water-transition-overlay.is-playing { opacity: 1; }
+.water-transition-svg {
+  width: 100%; height: 100%;
+  display: block;
+  transform: translateY(100%);
+}
+.water-transition-overlay.is-filling .water-transition-svg {
+  animation: water-rise 620ms cubic-bezier(0.65, 0, 0.35, 1) forwards;
+}
+.water-transition-overlay.is-dissipating {
+  animation: water-dissipate 480ms ease forwards;
+}
+.water-wave-back { fill: var(--teal-tint); }
+.water-wave-front { fill: var(--teal); }
+@keyframes water-rise {
+  from { transform: translateY(100%); }
+  to   { transform: translateY(0%); }
+}
+@keyframes water-dissipate {
+  from { opacity: 1; filter: blur(0px); }
+  to   { opacity: 0; filter: blur(10px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .water-transition-overlay.is-filling .water-transition-svg,
+  .water-transition-overlay.is-dissipating { animation: none; }
+}
+
+.scan-status { font-family: var(--font-mono); font-size: 13px; color: var(--teal-deep); min-height: 18px; }
+
+/* ================================================================
+   CONFIRMATION SCREEN — checkmark draw-in, appointment card, and
+   the front desk contact card.
+================================================================= */
+.confirm-brand-logo { width: 40px; height: 40px; object-fit: contain; margin-bottom: 6px; }
+.confirm-check-wrap { width: 76px; height: 76px; }
+.confirm-check-svg { width: 100%; height: 100%; }
+.confirm-check-circle {
+  fill: var(--seaglass-tint); stroke: var(--seaglass); stroke-width: 3;
+  stroke-dasharray: 226; stroke-dashoffset: 226;
+}
+.confirm-check-mark {
+  fill: none; stroke: var(--teal-deep); stroke-width: 5;
+  stroke-linecap: round; stroke-linejoin: round;
+  stroke-dasharray: 46; stroke-dashoffset: 46;
+}
+.confirm-check-wrap.is-animating .confirm-check-circle { animation: draw-in 550ms ease forwards; }
+.confirm-check-wrap.is-animating .confirm-check-mark { animation: draw-in 350ms ease 480ms forwards; }
+@keyframes draw-in { to { stroke-dashoffset: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .confirm-check-circle, .confirm-check-mark { stroke-dashoffset: 0; animation: none !important; }
+}
+
+.confirm-card {
+  width: 100%; max-width: 460px; margin-top: 22px;
+  background: var(--white); border: 1px solid var(--line);
+  border-radius: var(--radius-lg); box-shadow: var(--shadow-soft);
+  padding: 6px 20px; text-align: left;
+  animation: bubble-in 400ms cubic-bezier(0.2,0.7,0.3,1) both; animation-delay: 120ms;
+}
+.confirm-row { display: flex; align-items: center; gap: 14px; padding: 14px 0; border-bottom: 1px solid var(--line); }
+.confirm-row:last-child { border-bottom: none; }
+.confirm-row-icon {
+  width: 36px; height: 36px; border-radius: 50%; flex-shrink: 0;
+  background: var(--teal-tint); display: flex; align-items: center; justify-content: center;
+  font-size: 16px;
+}
+.confirm-row-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.confirm-row-label { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--ink-soft); }
+.confirm-row-value { font-weight: 600; font-size: 14.5px; color: var(--ink); }
+.confirm-code { font-family: var(--font-mono); color: var(--teal-deep); letter-spacing: 0.03em; }
+
+.front-desk-card {
+  width: 100%; max-width: 460px; margin-top: 14px;
+  display: flex; align-items: center; gap: 14px;
+  background: var(--bg-deep); border: 1.5px solid var(--line);
+  border-radius: var(--radius-md); padding: 14px 16px;
+  text-decoration: none; color: inherit;
+  transition: border-color 150ms ease, background 150ms ease, transform 150ms ease;
+  animation: bubble-in 400ms cubic-bezier(0.2,0.7,0.3,1) both; animation-delay: 220ms;
+}
+.front-desk-card:hover { border-color: var(--teal); background: var(--teal-tint); transform: translateY(-1px); }
+.front-desk-icon {
+  width: 38px; height: 38px; border-radius: 50%; flex-shrink: 0;
+  background: var(--teal); color: var(--white);
+  display: flex; align-items: center; justify-content: center; font-size: 16px;
+}
+.front-desk-text { display: flex; flex-direction: column; gap: 2px; text-align: left; min-width: 0; }
+.front-desk-label { font-size: 12px; font-weight: 700; color: var(--ink-soft); }
+.front-desk-number { font-size: 14.5px; color: var(--ink); }
+.front-desk-number strong { color: var(--teal-deep); }
+.front-desk-arrow { margin-left: auto; color: var(--teal); font-weight: 700; flex-shrink: 0; }
+
+/* Emergency Dropdown on Emergency Page */
+.emergency-dropdown {
+  background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.3);
+  border-radius: var(--radius-sm); padding: 12px; margin-top: 16px; text-align: left;
+  color: var(--white);
+}
+.emergency-dropdown summary { cursor: pointer; font-weight: 600; font-size: 14px; }
+.emergency-dropdown p { margin-top: 8px; font-size: 13.5px; line-height: 1.5; }
+
+#screen-emergency { background: var(--coral); color: var(--white); }
+#screen-emergency p.lede { color: rgba(255,255,255,0.9); }
+</style>
+</head>
+<body>
+
+<div id="app">
+
+  <!-- ============================================================
+       SCREEN 1 — WELCOME & TERMS & LANGUAGE (COMBINED SETUP PAGE)
+       Contains Terms & Conditions popup/scrollbox and language
+       detection & drop-down selector.
+  ============================================================= -->
+  <section class="screen is-active" id="screen-welcome">
+    <div class="center-column">
+      <img class="brand-logo-hero" src="" data-cove-logo alt="Cove" width="72" height="72">
+      <p class="eyebrow" style="margin-top:10px;">AI Hospital Front Desk</p>
+      <h1 class="display">Welcome to cove.</h1>
+      <p class="lede" style="margin-bottom: 16px;">Before we begin, please review our terms and select your preferred language.</p>
+
+      <div class="stack">
+        <!-- Terms and Conditions Scrollable Box -->
+        <div class="field">
+          <label>Terms and Conditions</label>
+          <div class="tc-scroll-box">
+            <p><strong>Terms of Service &amp; Privacy Notice (Placeholder)</strong></p>
+            <p>Welcome to cove AI Hospital Front Desk. By using this service, you consent to processing your intake information for scheduling and administrative guidance. This tool provides automated front-desk triage and assistance. In case of medical emergencies, please dial 911 immediately.</p>
+            <p>Your records and communication are protected in accordance with standard data safety standards. Information provided will be used by hospital staff to fulfill your appointment or medical inquiry requests.</p>
+          </div>
+          <label class="tc-checkbox-row">
+            <input type="checkbox" id="tc-accept-check" onchange="toggleTermsAcceptance(this.checked)">
+            <span>I accept the Terms and Conditions</span>
+          </label>
+        </div>
+
+        <!-- Language Preference -->
+        <div class="field">
+          <label for="welcome-lang-select">What language do you prefer?</label>
+          <!-- Complete 27 Supported Languages Dropdown -->
+          <select id="welcome-lang-select" onchange="setAppLanguage(this.value)">
+            <option value="en">English</option>
+            <option value="es">Spanish (Español)</option>
+            <option value="fr">French (Français)</option>
+            <option value="de">German (Deutsch)</option>
+            <option value="it">Italian (Italiano)</option>
+            <option value="pt">Portuguese (Português)</option>
+            <option value="nl">Dutch (Nederlands)</option>
+            <option value="da">Danish (Dansk)</option>
+            <option value="sv">Swedish (Svenska)</option>
+            <option value="fi">Finnish (Suomi)</option>
+            <option value="no">Norwegian (Norsk)</option>
+            <option value="pl">Polish (Polski)</option>
+            <option value="cs">Czech (Čeština)</option>
+            <option value="ro">Romanian (Română)</option>
+            <option value="hu">Hungarian (Magyar)</option>
+            <option value="bg">Bulgarian (Български)</option>
+            <option value="el">Greek (Ελληνικά)</option>
+            <option value="uk">Ukrainian (Українська)</option>
+            <option value="ru">Russian (Русский)</option>
+            <option value="tr">Turkish (Türkçe)</option>
+            <option value="id">Indonesian (Bahasa Indonesia)</option>
+            <option value="vi">Vietnamese (Tiếng Việt)</option>
+            <option value="th">Thai (ไทย)</option>
+            <option value="ja">Japanese (日本語)</option>
+            <option value="ko">Korean (한국어)</option>
+            <option value="zh">Chinese (中文)</option>
+            <option value="hi">Hindi (हिन्दी)</option>
+          </select>
+        </div>
+
+        <button class="btn btn-primary btn-block" id="btn-continue-welcome" disabled onclick="enterMainChatInterface()">Accept &amp; Continue</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================
+       SCREEN 2 — MAIN INTERFACE (CHAT + SIDEBAR LAYOUT)
+  ============================================================= -->
+  <section class="screen" id="screen-main">
+    <div class="main-layout">
+      
+      <!-- SIDEBAR
+           Toggleable, on by default when the main interface is first
+           entered (see enterMainChatInterface()). Always shows the
+           patient info panel — this is the app's only source of
+           information verification, so it's never tucked behind a
+           tab the user has to switch to. -->
+      <aside class="sidebar" id="app-sidebar">
+        <div class="sidebar-header">
+          <div class="brand">
+            <img class="brand-logo-small" src="" data-cove-logo alt="Cove" width="24" height="24">
+            cove
+          </div>
+        </div>
+
+        <!-- PATIENT INFO PANEL — always visible, the only source of
+             information verification in the app. -->
+        <div class="sidebar-profile-panel" id="sidebar-profile-panel">
+          <div class="profile-panel-scroll">
+            <h3 class="profile-panel-title">Patient info</h3>
+            <p class="profile-panel-note">Read-only here — ask the assistant in chat to update anything, e.g. "my name is actually...".</p>
+
+            <div class="profile-card">
+              <h4>Identity</h4>
+              <div class="profile-row"><span class="field-label">Patient ID</span><input type="text" id="prof-patient-id" value="Not set" readonly></div>
+              <div class="profile-row"><span class="field-label">Full name</span><input type="text" id="prof-name" value="Jane Doe" readonly></div>
+              <div class="profile-row"><span class="field-label">Date of birth</span><input type="text" id="prof-dob" value="Not set" readonly></div>
+              <div class="profile-row"><span class="field-label">Status</span><input type="text" id="prof-status" value="Not set" readonly></div>
+              <div class="profile-row"><span class="field-label">Visit type</span><input type="text" id="prof-visit-type" value="Not set" readonly></div>
+            </div>
+
+            <div class="profile-card">
+              <h4>Contact</h4>
+              <div class="profile-row"><span class="field-label">Email</span><input type="text" id="prof-email" value="Not set" readonly></div>
+              <div class="profile-row"><span class="field-label">Phone</span><input type="text" id="prof-phone" value="Not set" readonly></div>
+            </div>
+
+            <div class="profile-card">
+              <h4>Insurance</h4>
+              <div class="profile-row"><span class="field-label">Insurance card</span><input type="text" id="prof-insurance" value="Not on file" readonly></div>
+            </div>
+
+            <div class="profile-card">
+              <h4>Settings</h4>
+              <div class="profile-row"><span class="field-label">Preferred language</span><input type="text" id="prof-lang" value="English" readonly></div>
+              <div class="profile-row"><span class="field-label">Documents processed</span><input type="text" id="prof-docs" value="0" readonly></div>
+            </div>
+          </div>
+        </div>
+      </aside>
+
+      <!-- MAIN CONTENT AREA -->
+      <main class="main-content">
+        <!-- Chat Header -->
+        <header class="chat-header">
+          <div style="display:flex; align-items:center; gap:10px;">
+            <button class="sidebar-toggle-btn" id="sidebar-toggle-btn" onclick="toggleSidebar()">☰ Menu</button>
+            <span class="eyebrow" id="current-lang-display">EN</span>
+          </div>
+          <div style="display:flex; align-items:center; gap:8px;">
+            <!-- Log in / Create account — prominent (always visible,
+                 in the header) but no longer parked awkwardly at the
+                 top of a panel the patient might have collapsed. -->
+            <button class="header-auth-btn" id="header-login-btn" title="Log in or create an account" onclick="openLoginModal()">
+              <span class="header-auth-dot" aria-hidden="true"></span>
+              <span class="header-auth-label-full">Log in</span>
+            </button>
+            <div class="header-auth-chip" id="header-auth-chip">✅ Logged in</div>
+
+            <!-- Clears the whole conversation and every piece of
+                 patient state, then returns all the way to the
+                 Terms & Conditions / language screen. Confirmed via
+                 an in-page modal (see #reset-confirm-overlay) rather
+                 than window.confirm(), which can be silently blocked
+                 in embedded/sandboxed preview contexts. -->
+            <button class="icon-btn" id="reset-btn" title="Clear conversation and start over" aria-label="Clear conversation and start over" onclick="openResetConfirm()">↺</button>
+            <button class="btn btn-emergency" style="padding: 8px 14px; font-size: 13px;" onclick="goToEmergencyScreen('User clicked Emergency button.')">⚠ Emergency</button>
+          </div>
+        </header>
+
+        <!-- Chat Log Area -->
+        <div class="chat-log" id="chat-log">
+          <!-- Messages will be injected dynamically -->
+        </div>
+
+        <!-- Suggested questions — tapping one drops straight into the
+             same send pipeline as typing, so it reads as a ready-made
+             next message rather than a separate menu. -->
+        <div class="quick-actions-wrap">
+          <p class="quick-actions-label">Quick start</p>
+          <div class="quick-actions" id="quick-actions">
+            <button class="quick-chip" onclick="askSuggested('I need to book an appointment')">📅 Book an appointment</button>
+            <button class="quick-chip" onclick="askSuggested('What are your visiting hours?')">🕐 Hospital Policies</button>
+            <button class="quick-chip" onclick="askSuggested('Can you help me understand a document?')">📄 Explain a document</button>
+            <button class="quick-chip" onclick="askSuggested('What insurance plans do you accept?')">💳 Cancel</button>
+            <button class="quick-chip" onclick="askSuggested('I need to reschedule my appointment')">🔁 Reschedule</button>
+          </div>
+        </div>
+
+        <!-- Composer Bar -->
+        <div class="composer">
+          <div class="composer-row">
+            <!-- OCR File Upload Icon (Calls ocr_tool and updates translated_doc_count) -->
+            <button class="icon-btn" title="Upload Document (OCR)" onclick="triggerFileInput()">📎</button>
+            <input type="file" id="ocr-file-input" style="display:none" accept=".pdf,.jpg,.jpeg,.png" onchange="handleOcrFileUpload(event)">
+
+            <!-- Voice Audio Recording Button (Plays click sound & calls transcription_tool) -->
+            <button class="icon-btn" id="mic-btn" title="Record Voice Message" onclick="toggleVoiceInputRecording()">🎤</button>
+
+            <input type="text" id="chat-input" placeholder="Type a message..." onkeydown="if(event.key==='Enter') sendTextMessage();">
+            <button class="send-btn" onclick="sendTextMessage()">➤</button>
+          </div>
+        </div>
+
+      </main>
+    </div>
+  </section>
+
+  <!-- ============================================================
+       SCREEN 3 — CONFIRMATION SCREEN & PDF GENERATION
+  ============================================================= -->
+  <section class="screen" id="screen-confirmation">
+    <div class="center-column">
+      <img class="confirm-brand-logo" src="" data-cove-logo alt="Cove" width="40" height="40">
+      <div class="confirm-check-wrap" id="confirm-check-wrap">
+        <svg class="confirm-check-svg" viewBox="0 0 80 80" aria-hidden="true">
+          <circle class="confirm-check-circle" cx="40" cy="40" r="36"/>
+          <path class="confirm-check-mark" d="M24 41 L35 52 L57 28"/>
+        </svg>
+      </div>
+      <p class="eyebrow" style="margin-top:14px;">Booking complete</p>
+      <h2 class="display">You're all set.</h2>
+      <p class="lede">Your appointment has been booked successfully — a copy is saved to your profile.</p>
+
+      <div class="confirm-card">
+        <div class="confirm-row">
+          <span class="confirm-row-icon">🩺</span>
+          <div class="confirm-row-text"><span class="confirm-row-label">Doctor</span><span class="confirm-row-value" id="conf-doctor">Dr. Alana Reyes</span></div>
+        </div>
+        <div class="confirm-row">
+          <span class="confirm-row-icon">🏷️</span>
+          <div class="confirm-row-text"><span class="confirm-row-label">Department</span><span class="confirm-row-value" id="conf-department">Primary Care</span></div>
+        </div>
+        <div class="confirm-row">
+          <span class="confirm-row-icon">🗓️</span>
+          <div class="confirm-row-text"><span class="confirm-row-label">Date &amp; time</span><span class="confirm-row-value" id="conf-datetime">Tomorrow at 10:00 AM</span></div>
+        </div>
+        <div class="confirm-row">
+          <span class="confirm-row-icon">📍</span>
+          <div class="confirm-row-text"><span class="confirm-row-label">Location</span><span class="confirm-row-value">Main Campus, 2nd Floor</span></div>
+        </div>
+        <div class="confirm-row">
+          <span class="confirm-row-icon">🔖</span>
+          <div class="confirm-row-text"><span class="confirm-row-label">Confirmation code</span><span class="confirm-row-value confirm-code" id="pdf-conf-code">COVE-8842</span></div>
+        </div>
+      </div>
+
+      <!-- Front desk contact — always reachable from the confirmation
+           screen (and printed on the PDF below) so a change of plans
+           never leaves the patient without a number to call. -->
+      <a class="front-desk-card" href="tel:+15552014477" id="front-desk-link">
+        <span class="front-desk-icon" aria-hidden="true">☎</span>
+        <span class="front-desk-text">
+          <span class="front-desk-label">Need to make a change?</span>
+          <span class="front-desk-number">Call the front desk — <strong id="front-desk-number-text">(555) 201-4477</strong></span>
+        </span>
+        <span class="front-desk-arrow" aria-hidden="true">→</span>
+      </a>
+
+      <div class="stack" style="margin-top:18px;">
+        <!-- Code that generates and downloads PDF when clicked -->
+        <button class="btn btn-primary btn-block" onclick="generateAppointmentPDF()">⬇ Download PDF Summary</button>
+        <button class="btn btn-ghost btn-block" onclick="showScreen('screen-main')">Back to Chat</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================
+       SCREEN 4 — EMERGENCY SCREEN
+  ============================================================= -->
+  <section class="screen" id="screen-emergency">
+    <div class="center-column">
+      <div style="font-size:56px; margin-bottom:12px;">⚠</div>
+      <h1 class="display">Medical Emergency Flagged</h1>
+      <p class="lede">If you are experiencing a life-threatening medical emergency, please call 911 immediately.</p>
+
+      <div class="stack" style="margin-top:20px;">
+        <!-- Output text & reason dropdown -->
+        <div id="emergency-output-text" style="font-weight: 600; font-size: 16px;">
+          Immediate medical assistance recommended.
+        </div>
+
+        <!-- Dropdown option for emergency reason -->
+        <details class="emergency-dropdown">
+          <summary>Why was this marked an emergency?</summary>
+          <p id="emergency-reason-text">Your request contained urgent medical indicators requiring emergency review.</p>
+        </details>
+
+        <a class="btn btn-primary btn-block" style="background:#fff; color:var(--coral-deep); margin-top:16px;" href="tel:911">Call 911 Now</a>
+        <button class="btn btn-ghost btn-block" style="color:#fff; border-color:rgba(255,255,255,0.6);" onclick="showScreen('screen-main')">Return to Chat</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================
+       LOGIN — FULL-SCREEN INTERFACE (existing patients)
+       Takes over the entire viewport like any other screen, rather
+       than a small popup. Disappears the instant login succeeds
+       via password, dropping the patient straight back
+       into whatever the main interface was showing underneath.
+  ============================================================= -->
+  <div class="login-interface-overlay" id="login-interface-overlay">
+    <div class="login-interface-topbar">
+      <div class="brand">
+        <img class="brand-logo-small" src="" data-cove-logo alt="Cove" width="24" height="24">
+        cove
+      </div>
+      <button type="button" class="btn btn-ghost" style="padding:8px 16px; font-size:13px;" onclick="closeLoginModal()">Cancel</button>
+    </div>
+
+    <!-- Password panel (default view) -->
+    <div class="center-column" id="login-password-panel">
+      <p class="eyebrow">Existing patient</p>
+      <h2 class="display">Welcome back.</h2>
+      <p class="lede">Log in and we'll only ask you what's changed since your last visit.</p>
+      <div class="stack" style="margin-top:18px;">
+        <div class="field">
+          <label for="login-email-input">Email or phone number</label>
+          <input type="text" id="login-email-input" placeholder="you@example.com" autocomplete="username" onkeydown="if(event.key==='Enter'){ event.preventDefault(); submitExistingLogin(); }">
+        </div>
+        <div class="field">
+          <label for="login-pass-input">Password</label>
+          <input type="password" id="login-pass-input" placeholder="••••••••" autocomplete="current-password" onkeydown="if(event.key==='Enter'){ event.preventDefault(); submitExistingLogin(); }">
+        </div>
+        <button class="btn btn-primary btn-block" id="login-submit-btn" onclick="submitExistingLogin()">Log in</button>
+        <p class="scan-status" id="login-error-text" style="display:none;color:var(--coral);">&nbsp;</p>
+        <!-- New patients don't have credentials yet — this switches
+             the same overlay over to the sign-up panel below, which
+             is what actually calls register_patient. -->
+        <button type="button" class="btn btn-ghost btn-block" onclick="showLoginSignupPanel()">New here? Create an account</button>
+      </div>
+    </div>
+
+    <!-- Sign-up panel (hidden until "New here? Create an account") —
+         this is the only place register_patient is called, since
+         it's the one moment we actually have a brand-new patient's
+         details to register. -->
+    <div class="center-column" id="login-signup-panel" style="display:none;">
+      <p class="eyebrow">New patient</p>
+      <h2 class="display">Create your account.</h2>
+      <p class="lede">We verify identity against this information later, so please make sure it's accurate.</p>
+      <div class="stack" style="margin-top:18px;">
+        <div class="field">
+          <label for="signup-name-input">Full name</label>
+          <input type="text" id="signup-name-input" placeholder="Jordan Rivera" autocomplete="name">
+        </div>
+        <div class="field">
+          <label for="signup-dob-input">Date of birth</label>
+          <input type="date" id="signup-dob-input" autocomplete="bday">
+        </div>
+        <div class="field">
+          <label for="signup-email-input">Email</label>
+          <input type="email" id="signup-email-input" placeholder="you@example.com" autocomplete="username">
+        </div>
+        <div class="field">
+          <label for="signup-phone-input">Phone number</label>
+          <input type="tel" id="signup-phone-input" placeholder="(555) 123-4567" autocomplete="tel">
+        </div>
+        <div class="field">
+          <label for="signup-pass-input">Create a password</label>
+          <input type="password" id="signup-pass-input" placeholder="••••••••" autocomplete="new-password">
+        </div>
+        <div class="field">
+          <label for="signup-insurance-input">Photo of insurance card</label>
+          <input type="file" id="signup-insurance-input" accept=".jpg,.jpeg,.png,.pdf" onchange="handleInsurancePhotoSelected(event)">
+          <p class="scan-status" id="signup-insurance-filename" style="text-align:left;">&nbsp;</p>
+        </div>
+        <button class="btn btn-primary btn-block" id="signup-submit-btn" onclick="submitNewPatientRegistration()">Create account</button>
+        <p class="scan-status" id="signup-error-text" style="display:none;color:var(--coral);">&nbsp;</p>
+        <button type="button" class="btn btn-ghost btn-block" onclick="showLoginPasswordPanel()">Already have an account? Log in</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================================
+       MODAL — CONFIRM "CLEAR CONVERSATION & START OVER"
+       This one stays a compact popup (a quick yes/no doesn't need
+       the full screen) — built as an in-page modal rather than
+       window.confirm(), which is frequently blocked or
+       auto-dismissed in embedded previews.
+  ============================================================= -->
+  <div class="confirm-modal-overlay" id="reset-confirm-overlay">
+    <div class="confirm-modal-card">
+      <h2 class="display" style="font-size:20px; margin-bottom:6px;">Start over?</h2>
+      <p style="font-size:13.5px; color:var(--ink-soft); margin-bottom:18px;">This clears the whole conversation and everything entered so far, and takes you back to the very beginning.</p>
+      <div class="stack">
+        <button class="btn btn-primary btn-block" onclick="confirmReset()">Yes, clear everything</button>
+        <button class="btn btn-ghost btn-block" style="border:none;" onclick="closeResetConfirm()">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================================
+       WATER-FILL TRANSITION — plays over a "start over" reset.
+       Two soft wave layers rise up to cover the whole screen, the
+       state swap happens underneath while fully covered, then the
+       water dissipates (fades + blurs away) to reveal the fresh
+       welcome screen. Purely decorative — toggled by JS classes
+       (.is-playing / .is-filling / .is-dissipating), never blocks
+       clicks (pointer-events: none).
+  ============================================================= -->
+  <div class="water-transition-overlay" id="water-transition-overlay" aria-hidden="true">
+    <svg class="water-transition-svg" viewBox="0 0 100 100" preserveAspectRatio="none">
+      <path class="water-wave water-wave-back" d="M0,12 Q25,4 50,12 T100,12 V100 H0 Z"></path>
+      <path class="water-wave water-wave-front" d="M0,16 Q25,8 50,16 T100,16 V100 H0 Z"></path>
+    </svg>
+  </div>
+
+</div>
+
+
+<!-- ================================================================
+     JAVASCRIPT LOGIC
+================================================================= -->
+<script>
+/* ==================================================================
+   STATE MANAGEMENT
+   Tracks language, patient status, doc counts, and sidebar toggling.
+=================================================================== */
+const patientState = {
+  patientId: null,
+  isNewPatient: null,
+
+  visitType: null,
+
+  language: 'en',
+  languageLabel: 'English',
+  
+  isLoggedIn: false,
+
+  sidebarOpen: true,
+
+  pendingAppointmentAction: null,
+  pendingBookingAfterLogin: false
+};
+
+// Single source of truth for the front desk's number — shown on the
+// confirmation screen and printed on the downloaded PDF.
+const FRONT_DESK_PHONE = '(555) 201-4477';
+const FRONT_DESK_PHONE_TEL = '+15552014477';
+
+const SUPPORTED_LANGUAGES = {
+  en: 'English', es: 'Spanish', fr: 'French', de: 'German', it: 'Italian',
+  pt: 'Portuguese', nl: 'Dutch', da: 'Danish', sv: 'Swedish', fi: 'Finnish',
+  no: 'Norwegian', pl: 'Polish', cs: 'Czech', ro: 'Romanian', hu: 'Hungarian',
+  bg: 'Bulgarian', el: 'Greek', uk: 'Ukrainian', ru: 'Russian', tr: 'Turkish',
+  id: 'Indonesian', vi: 'Vietnamese', th: 'Thai', ja: 'Japanese', ko: 'Korean',
+  zh: 'Chinese', hi: 'Hindi'
+};
+
+// Official Cove logo — used as the brand mark throughout the app and
+// as the assistant's chat avatar. Inlined as a data URI so the app
+// stays a single self-contained file with no external asset request.
+const COVE_LOGO_DATA_URL = 'data:image/png;base64,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';
+
+// The markup above has several <img data-cove-logo src=""> placeholders
+// (welcome hero, sidebar brand, confirmation screen, login modal, chat
+// avatars) — wire them all up to the real logo. This script sits at the
+// end of <body>, so the DOM is already parsed by the time this runs.
+document.querySelectorAll('[data-cove-logo]').forEach((img) => {
+  img.src = COVE_LOGO_DATA_URL;
+});
+
+const API_BASE_URL = window.location.hostname === 'localhost'
+  ? 'http://localhost:8000'
+  : ''; // same-origin in prod, or set to your deployed API URL
+  
+async function apiPost(path, body) {
+  const res = await fetch(`http://localhost:8000${path}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(body)
+  });
+
+  if (!res.ok) {
+    throw new Error(`Server error: ${res.status}`);
+  }
+
+  return await res.json();
+}
+
+let threadId = `session-${Date.now()}`;
+
+/* ==================================================================
+   NAVIGATION & SCREEN ROUTER
+=================================================================== */
+function showScreen(screenId) {
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('is-active'));
+  const target = document.getElementById(screenId);
+  if(target) target.classList.add('is-active');
+}
+
+/* Enable welcome screen button only when terms checkbox is checked */
+function toggleTermsAcceptance(checked) {
+  document.getElementById('btn-continue-welcome').disabled = !checked;
+}
+
+/* Set language from welcome page dropdown */
+function setAppLanguage(code) {
+  patientState.language = code;
+  patientState.languageLabel = SUPPORTED_LANGUAGES[code] || code;
+  document.getElementById('current-lang-display').textContent = code.toUpperCase();
+  document.getElementById('prof-lang').value = patientState.languageLabel;
+}
+function setWelcomeLang(code) {
+  document.getElementById('welcome-lang-select').value = code;
+  setAppLanguage(code);
+}
+/* Transition from Welcome/Terms to Main Interface */
+async function enterMainChatInterface() {
+  const btn = document.getElementById('btn-continue-welcome');
+  if (btn.dataset.busy === 'true') return;   // double-click guard
+  btn.dataset.busy = 'true';
+  btn.disabled = true;
+
+  showScreen('screen-main');
+  await showGreeting();
+
+  btn.disabled = false;
+  btn.dataset.busy = 'false';
+}
+
+/* ==================================================================
+   SIDEBAR & PROFILE OVERLAY CONTROLS
+=================================================================== */
+function toggleSidebar() {
+  const sidebar = document.getElementById('app-sidebar');
+  patientState.sidebarOpen = !patientState.sidebarOpen;
+  sidebar.classList.toggle('is-collapsed', !patientState.sidebarOpen);
+}
+
+/* Swaps the prominent Log in / Create account prompt for a small
+   "Logged in" chip once the patient has authenticated, and back
+   again on reset. The patient info panel underneath is always
+   visible either way. */
+function setAuthButtonsVisibility() {
+  const loginBtn = document.getElementById('header-login-btn');
+  const chip = document.getElementById('header-auth-chip');
+  if (loginBtn) loginBtn.style.display = patientState.isLoggedIn ? 'none' : 'flex';
+  if (chip) chip.style.display = patientState.isLoggedIn ? 'flex' : 'none';
+}
+
+/* ==================================================================
+   RESET / START OVER
+   Wipes the chat log and every piece of in-memory patient state,
+   then routes all the way back to the Terms & Conditions / language
+   screen — same as a first-time visit. Reachable any time from the
+   header's ↺ button; confirmed via the in-page modal above.
+=================================================================== */
+function openResetConfirm() {
+  document.getElementById('reset-confirm-overlay').classList.add('is-visible');
+}
+function closeResetConfirm() {
+  document.getElementById('reset-confirm-overlay').classList.remove('is-visible');
+}
+async function confirmReset() {
+  closeResetConfirm();
+
+  await resetBackendSession();
+
+  // Give the next conversation a completely new thread.
+  threadId = crypto.randomUUID();
+
+  playWaterTransition(resetConversation);
+}
+
+/* Plays the water-fill/dissipate transition and calls onCovered()
+   the instant the screen is fully covered — that's when the actual
+   state reset happens, so the patient never sees the swap itself. */
+function playWaterTransition(onCovered) {
+  const overlay = document.getElementById('water-transition-overlay');
+  if (!overlay) { if (onCovered) onCovered(); return; }
+
+  overlay.classList.remove('is-dissipating');
+  overlay.classList.add('is-playing', 'is-filling');
+
+  setTimeout(() => {
+    if (onCovered) onCovered();
+    overlay.classList.remove('is-filling');
+    overlay.classList.add('is-dissipating');
+
+    setTimeout(() => {
+      overlay.classList.remove('is-playing', 'is-dissipating');
+    }, 480);
+  }, 620);
+}
+
+async function resetBackendSession() {
+  try {
+    const res = await fetch(
+      `${API_BASE_URL}/api/session/reset?thread_id=${encodeURIComponent(threadId)}`,
+      {
+        method: 'POST'
+      }
+    );
+
+    if (!res.ok) {
+      console.error('Backend session reset failed:', res.status);
+      return false;
+    }
+
+    const data = await res.json();
+
+    return data.success === true;
+
+  } catch (err) {
+    console.error('Could not reset backend session:', err);
+    return false;
+  }
+}
+
+function resetConversation() {
+  patientState.patientId = null;
+  patientState.isNewPatient = null;
+  patientState.visitType = null;
+  patientState.symptoms = null;
+  patientState.awaitingSymptoms = false;
+  patientState.language = 'en';
+  patientState.languageLabel = 'English';
+  patientState.translated_doc_count = 0;
+  patientState.isLoggedIn = false;
+  patientState.sidebarOpen = true;
+  patientState.pendingAppointmentAction = null;
+  patientState.pendingBookingAfterLogin = false;
+
+  // Clear the chat log and composer.
+  chatLog.innerHTML = '';
+  const chatInput = document.getElementById('chat-input');
+  if (chatInput) chatInput.value = '';
+
+  // Sidebar: expanded, auth prompt back (not the logged-in chip).
+  const sidebar = document.getElementById('app-sidebar');
+  sidebar.classList.remove('is-collapsed');
+  setAuthButtonsVisibility();
+
+  // Profile fields back to their untouched defaults.
+  document.getElementById('prof-patient-id').value = 'Not set';
+  document.getElementById('prof-name').value = 'Jane Doe';
+  document.getElementById('prof-dob').value = 'Not set';
+  document.getElementById('prof-status').value = 'Not set';
+  document.getElementById('prof-visit-type').value = 'Not set';
+  document.getElementById('prof-email').value = 'Not set';
+  document.getElementById('prof-phone').value = 'Not set';
+  document.getElementById('prof-insurance').value = 'Not on file';
+  document.getElementById('prof-lang').value = 'English';
+  document.getElementById('prof-docs').value = '0';
+
+  // Close the login interface if it happened to be open, and reset
+  // it back to the password panel with cleared fields for next time.
+  closeLoginModal();
+  showLoginPasswordPanel();
+  const loginEmail = document.getElementById('login-email-input');
+  if (loginEmail) loginEmail.value = '';
+  const loginPass = document.getElementById('login-pass-input');
+  if (loginPass) loginPass.value = '';
+  const signupName = document.getElementById('signup-name-input');
+  if (signupName) signupName.value = '';
+  const signupDob = document.getElementById('signup-dob-input');
+  if (signupDob) signupDob.value = '';
+  const signupEmail = document.getElementById('signup-email-input');
+  if (signupEmail) signupEmail.value = '';
+  const signupPhone = document.getElementById('signup-phone-input');
+  if (signupPhone) signupPhone.value = '';
+  const signupPass = document.getElementById('signup-pass-input');
+  if (signupPass) signupPass.value = '';
+  const signupInsurance = document.getElementById('signup-insurance-input');
+  if (signupInsurance) signupInsurance.value = '';
+  const signupInsuranceFilename = document.getElementById('signup-insurance-filename');
+  if (signupInsuranceFilename) signupInsuranceFilename.textContent = '\u00A0';
+  selectedInsuranceFile = null;
+  hideLoginError();
+  hideSignupError();
+  setLoginButtonBusy(false);
+
+  // Welcome screen: language back to English, T&C unchecked, the
+  // "Accept & Continue" button disabled again, detect field cleared.
+  document.getElementById('welcome-lang-select').value = 'en';
+  document.getElementById('current-lang-display').textContent = 'EN';
+  const tcCheck = document.getElementById('tc-accept-check');
+  if (tcCheck) tcCheck.checked = false;
+  document.getElementById('btn-continue-welcome').disabled = true;
+
+  showScreen('screen-welcome');
+}
+
+/* ==================================================================
+   LOGIN — FULL-SCREEN INTERFACE
+=================================================================== */
+function openLoginModal() {
+  showLoginPasswordPanel();
+  document.getElementById('login-interface-overlay').classList.add('is-visible');
+}
+function closeLoginModal() {
+  document.getElementById('login-interface-overlay').classList.remove('is-visible');
+}
+function showLoginPasswordPanel() {
+  document.getElementById('login-password-panel').style.display = 'flex';
+  document.getElementById('login-signup-panel').style.display = 'none';
+}
+function showLoginSignupPanel() {
+  document.getElementById('login-password-panel').style.display = 'none';
+  document.getElementById('login-signup-panel').style.display = 'flex';
+}
+function setLoginButtonBusy(isBusy) {
+  const btn = document.getElementById('login-submit-btn');
+  if (!btn) return;
+  btn.disabled = isBusy;
+  btn.textContent = isBusy ? 'Logging in…' : 'Log in';
+}
+function showLoginError(message) {
+  const el = document.getElementById('login-error-text');
+  if (!el) return;
+  el.textContent = message;
+  el.style.display = 'block';
+}
+function hideLoginError() {
+  const el = document.getElementById('login-error-text');
+  if (el) el.style.display = 'none';
+}
+function showSignupError(message) {
+  const el = document.getElementById('signup-error-text');
+  if (!el) return;
+  el.textContent = message;
+  el.style.display = 'block';
+}
+function hideSignupError() {
+  const el = document.getElementById('signup-error-text');
+  if (el) el.style.display = 'none';
+}
+
+/* ==================================================================
+   PATIENT REGISTRATION AND LOGIN TOOLS: BACKEND CALL
+=================================================================== */
+async function register_patient(params) {
+  const data = await apiPost('/api/patients/register', {
+    name: params.name,
+    email: params.email,
+    password: params.password,
+    dob: params.dob,
+    phone: params.phone
+  });
+
+  return {
+    patientId: data.patientId,
+    success: data.success,
+    reason: data.reason
+  };
+}
+
+async function login_patient(params) {
+  const data = await apiPost('/api/patients/login', {
+    email: params.email,
+    password: params.password
+  });
+
+  return {
+    patientId: data.patientId,
+    patient: data.patient,
+    success: data.success,
+    reason: data.reason
+  };
+}
+
+/* Logs an existing patient in by actually checking their credentials
+   against the backend.*/
+async function submitExistingLogin() {
+  const email = document.getElementById('login-email-input').value.trim();
+  const password = document.getElementById('login-pass-input').value;
+  hideLoginError();
+
+  if (!email || !password) {
+    showLoginError('Please enter your email and password.');
+    return;
+  }
+
+  setLoginButtonBusy(true);
+  try {
+    // Calls backend login_patient to verify credentials
+    const result = await login_patient({ method: 'password', email, password });
+    if (!result.success) {
+      showLoginError(result.reason || "We couldn't find an account with that email and password.");
+      return;
+    }
+    completeLogin(false, result.patientId, result.patient);
+  } catch (err) {
+    showLoginError('Something went wrong reaching the server. Please try again.');
+  } finally {
+    setLoginButtonBusy(false);
+  }
+}
+/* Shared "successful login" side effects. */
+function completeLogin(isNewPatient, patientId, patient) {
+  patientState.isLoggedIn = true;
+  patientState.isNewPatient = isNewPatient;
+  patientState.patientId = patientId;   // <-- new
+  document.getElementById('prof-status').value = isNewPatient ? 'New Patient' : 'Existing Patient';
+  document.getElementById('prof-patient-id').value = patientId || 'Not set';
+
+  // The login endpoint returns the patient's stored record — use it
+  // as the source of truth for the sidebar rather than guessing from
+  // whatever the patient typed into the login form.
+  if (patient) {
+    document.getElementById('prof-name').value = patient.name || 'Not set';
+    document.getElementById('prof-dob').value = patient.dob || 'Not set';
+    document.getElementById('prof-email').value = patient.email || 'Not set';
+    document.getElementById('prof-phone').value = patient.phone || 'Not set';
+    document.getElementById('prof-insurance').value = patient.insurance_provider ? 'On file' : 'Not on file';
+  }
+
+  setAuthButtonsVisibility();
+  closeLoginModal();
+  addBotMessage(isNewPatient
+    ? "Welcome! You're logged in as a new patient."
+    : "Welcome back! You are now logged in as an existing patient.");
+
+  // Resume whatever booking flow was waiting on a login.
+  if (patientState.pendingBookingAfterLogin) {
+    patientState.pendingBookingAfterLogin = false;
+    processUserMessage('');
+  }
+}
+/* Collects the sign-up form and hands it to the backend register_patient
+   call. This is the one place in the whole app that registers a brand
+   new patient record. */
+/* Holds the File object picked in the insurance-card input — kept in
+   JS state (not just the <input>) so it survives the panel switching
+   and can be uploaded as a separate step right after registration. */
+let selectedInsuranceFile = null;
+
+function handleInsurancePhotoSelected(event) {
+  const file = event.target.files?.[0];
+  const label = document.getElementById('signup-insurance-filename');
+  selectedInsuranceFile = file || null;
+  if (label) label.textContent = file ? file.name : '\u00A0';
+}
+
+async function submitNewPatientRegistration() {
+  const name = document.getElementById('signup-name-input').value.trim();
+  const dob = document.getElementById('signup-dob-input').value;
+  const email = document.getElementById('signup-email-input').value.trim();
+  const phone = document.getElementById('signup-phone-input').value.trim();
+  const password = document.getElementById('signup-pass-input').value;
+  hideSignupError();
+
+  if (!name || !dob || !email || !phone || !password) {
+    showSignupError("Please fill in your name, date of birth, email, phone number, and a password before creating an account.");
+    return;
+  }
+  if (!selectedInsuranceFile) {
+    showSignupError("Please upload a photo of your insurance card.");
+    return;
+  }
+
+  const signupBtn = document.getElementById('signup-submit-btn');
+  if (signupBtn) { signupBtn.disabled = true; signupBtn.textContent = 'Creating account…'; }
+
+  try {
+    // Calls backend register_patient to create the new patient record
+    const result = await register_patient({ name, dob, email, phone, password, language: patientState.language });
+    if (!result.success) {
+      showSignupError(result.reason || 'That email may already be registered.');
+      return;
+    }
+    completeLogin(true, result.patientId);
+    document.getElementById('prof-lang').value = patientState.languageLabel;
+    document.getElementById('prof-dob').value = dob;
+    document.getElementById('prof-email').value = email;
+    document.getElementById('prof-phone').value = phone;
+    addBotMessage(`Your account has been created (Patient ID: ${result.patientId}).`);
+
+    // Upload the insurance card photo now that we have a thread to
+    // attach it to — reuses the same OCR/document pipeline as the
+    // in-chat document upload.
+    if (selectedInsuranceFile) {
+      const formData = new FormData();
+      formData.append('thread_id', threadId);
+      formData.append('file', selectedInsuranceFile);
+      try {
+        const res = await fetch(`${API_BASE_URL}/api/documents/upload`, { method: 'POST', body: formData });
+        const data = await res.json();
+        if (res.ok && data.success) {
+          document.getElementById('prof-insurance').value = 'On file';
+          const docCountEl = document.getElementById('prof-docs');
+          if (docCountEl) docCountEl.value = data.doc_count;
+        } else {
+          document.getElementById('prof-insurance').value = 'Upload failed — please resend in chat';
+        }
+      } catch (err) {
+        console.error('Insurance photo upload failed:', err);
+        document.getElementById('prof-insurance').value = 'Upload failed — please resend in chat';
+      }
+    }
+  } catch (err) {
+    showSignupError('Something went wrong reaching the server. Please try again.');
+  } finally {
+    if (signupBtn) { signupBtn.disabled = false; signupBtn.textContent = 'Create account'; }
+  }
+}
+
+/* ==================================================================
+   AUDIO SOUND PLAY: TTS BACKEND CALL
+=================================================================== */
+/* Play sound click cue when user clicks recording */
+function playAudioClickCue() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(600, ctx.currentTime);
+    gain.gain.setValueAtTime(0.1, ctx.currentTime);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start();
+    osc.stop(ctx.currentTime + 0.12);
+  } catch(e) { console.log('Audio cue played'); }
+}
+
+/* Tracks whichever single message's audio is currently loading or
+   playing, so a second tap anywhere always means "stop", and
+   starting a new message's audio always cleanly stops the last one. */
+let ttsAudioState = { audio: null, btn: null, abortController: null };
+
+function stopMessageAudio() {
+  const state = ttsAudioState;
+  if (state.abortController) {
+    state.abortController.abort();
+    state.abortController = null;
+  }
+  if (state.audio) {
+    state.audio.pause();
+    state.audio.currentTime = 0;
+    state.audio = null;
+  }
+  if (state.btn) {
+    state.btn.classList.remove('is-playing');
+    state.btn.disabled = false;
+    state.btn.textContent = '🔊 Listen';
+  }
+  state.btn = null;
+}
+
+/* TURNS TEXT TO SPEECH — tapping the same button again stops
+   playback (or cancels an in-flight request) instead of only ever
+   being able to start audio and wait it out. */
+async function playMessageAudio(text, btnEl) {
+  if (!text) return;
+
+  // Tapping the button that's currently loading/playing stops it.
+  if (btnEl && ttsAudioState.btn === btnEl) {
+    stopMessageAudio();
+    return;
+  }
+
+  // Starting a different message's audio stops whatever was playing.
+  stopMessageAudio();
+
+  if (btnEl) {
+    ttsAudioState.btn = btnEl;
+    btnEl.classList.add('is-playing');
+    btnEl.textContent = '⏳ Loading… (tap to cancel)';
+  }
+
+  const abortController = new AbortController();
+  ttsAudioState.abortController = abortController;
+
+  try {
+    const res = await fetch(
+      `${API_BASE_URL}/api/audio/tts`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          text: text,
+          language: patientState.language
+        }),
+        signal: abortController.signal
+      }
+    );
+
+    const data = await res.json();
+
+    if (!res.ok || !data.success || !data.audio_url) {
+      throw new Error(
+        data.reason || 'TTS failed.'
+      );
+    }
+
+    // If this button was stopped (or a different one started) while
+    // we were waiting on the network, don't start audio out from
+    // under whatever the button is doing now.
+    if (ttsAudioState.btn !== btnEl) return;
+
+    const audio = new Audio(
+      `${API_BASE_URL}${data.audio_url}`
+    );
+    ttsAudioState.audio = audio;
+    ttsAudioState.abortController = null;
+
+    if (btnEl) {
+      btnEl.textContent = '⏹ Stop';
+    }
+
+    await new Promise((resolve, reject) => {
+      audio.onended = resolve;
+      audio.onerror = reject;
+
+      audio.play().catch(reject);
+    });
+
+    stopMessageAudio();
+
+  } catch (err) {
+    if (err.name === 'AbortError') return; // user tapped stop — already reset
+    console.error('TTS playback failed:', err);
+
+    if (btnEl) {
+      btnEl.textContent = '🔊 Failed';
+    }
+    setTimeout(() => { if (ttsAudioState.btn === btnEl) stopMessageAudio(); }, 1400);
+  }
+}
+
+/* ==================================================================
+   FILE UPLOADS: OCR BACKEND CALL
+=================================================================== */
+function triggerFileInput() {
+  document.getElementById('ocr-file-input').click();
+}
+
+async function handleOcrFileUpload(event) {
+  const file = event.target.files?.[0];
+
+  if (!file) return;
+
+  const formData = new FormData();
+  formData.append('thread_id', threadId);
+  formData.append('file', file);
+
+  showTypingIndicator('reading');
+
+  try {
+    const res = await fetch(`${API_BASE_URL}/api/documents/upload`, {
+      method: 'POST',
+      body: formData
+    });
+
+    const data = await res.json();
+
+    if (!res.ok || !data.success) {
+      throw new Error(
+        data.reason || 'The document could not be read.'
+      );
+    }
+    hideTypingIndicator();
+    addBotMessage(`I've read <strong>${escapeHtml(file.name)}</strong> — you can now ask me about it.`);
+    const docCountEl = document.getElementById('prof-docs');
+    if (docCountEl) docCountEl.value = data.doc_count;
+  } catch (err) {
+    console.error('OCR upload failed:', err);
+    hideTypingIndicator();
+    addBotMessage(
+      "Sorry, I couldn't read that document. Please try another file."
+    );
+
+  } finally {
+    // Allows the user to upload the same file again later.
+    event.target.value = '';
+  }
+}
+
+/* ==================================================================
+   AUDIO UPLOADS: STT BACKEND CALL
+=================================================================== */
+
+/* Real voice input: click once to start recording (getUserMedia +
+   MediaRecorder), click again to stop. On stop, the clip is uploaded to
+   /api/audio/transcribe (Deepgram Nova 3, via tools.transcription_tool)
+   and the returned transcript is sent through the normal chat pipeline,
+   exactly like a typed message. Not part of the LangGraph -- purely
+   frontend-triggered by the mic icon, same as OCR uploads. */
+let activeMediaRecorder = null;
+let activeAudioChunks = [];
+let activeMicStream = null;
+
+async function toggleVoiceInputRecording() {
+  const btn = document.getElementById('mic-btn');
+
+  // If already recording, this click means "stop".
+  if (activeMediaRecorder && activeMediaRecorder.state === 'recording') {
+    activeMediaRecorder.stop();
+    return;
+  }
+
+  playAudioClickCue();
+
+  let stream;
+
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: true
+    });
+  } catch (err) {
+    console.error('Microphone access failed:', err);
+
+    addBotMessage(
+      "I couldn't access your microphone. Please check your browser's microphone permissions and try again."
+    );
+
+    return;
+  }
+
+  activeMicStream = stream;
+  activeAudioChunks = [];
+
+  activeMediaRecorder = new MediaRecorder(stream);
+
+  activeMediaRecorder.ondataavailable = (event) => {
+    if (event.data && event.data.size > 0) {
+      activeAudioChunks.push(event.data);
+    }
+  };
+
+ activeMediaRecorder.onstop = async () => {
+    btn.classList.remove('is-recording');
+
+    if (activeMicStream) {
+      activeMicStream.getTracks().forEach(track => track.stop());
+      activeMicStream = null;
+    }
+
+    const mimeType = activeMediaRecorder.mimeType || 'audio/webm';
+    const blob = new Blob(activeAudioChunks, { type: mimeType });
+    const extension = mimeType.includes('ogg') ? 'ogg' : 'webm';
+    const formData = new FormData();
+    formData.append('audio', blob, `recording.${extension}`);
+
+    showTypingIndicator('transcribing');
+
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/audio/transcribe`, {
+        method: 'POST',
+        body: formData
+      });
+      const result = await res.json();
+
+      if (!res.ok || !result.success || !result.transcript) {
+        throw new Error(result.reason || 'Transcription failed.');
+      }
+
+      const transcript = result.transcript.trim();
+      if (!transcript) {
+        hideTypingIndicator();
+        addBotMessage("I couldn't hear anything clearly. Please try again.");
+        return;
+      }
+
+      hideTypingIndicator();
+      if (chatBusy) return;               // <-- guard belongs here
+      addUserMessage(transcript);
+      await processUserMessage(transcript);
+
+    } catch (err) {
+      console.error('Transcription failed:', err);
+      hideTypingIndicator();
+      addBotMessage("Sorry, I couldn't transcribe that. Please try again or type your message.");
+    } finally {
+      activeAudioChunks = [];
+      activeMediaRecorder = null;
+    }
+};
+
+  activeMediaRecorder.start();
+  btn.classList.add('is-recording');
+}
+
+/* ==================================================================
+   CHAT ENGINE & CONVERSATIONAL FLOW
+=================================================================== */
+const chatLog = document.getElementById('chat-log');
+let lastConfirmedAppointment = null;   // populated by showConfirmationScreen()
+
+/* WE NEED TO MAKE A TOOL THAT TRANSLATES THE FIRST MESSAGE FOR THE
+   USER
+ */
+async function fetchTranslatedGreeting(lang) {
+  const fallback = `Hello! I'm your Cove Assistant. How can I help you today? You can book, reschedule, or ask questions in ${patientState.languageLabel}.`;
+  try {
+    const data = await apiPost('/api/chat/greeting', { preferred_language: lang });
+    return data.output_text || fallback;
+  } catch (err) {
+    console.error('Greeting fetch failed:', err);
+    return fallback;
+  }
+}
+
+async function showGreeting() {
+  chatLog.innerHTML = '';
+  showTypingIndicator();
+  const greeting = await fetchTranslatedGreeting(patientState.language);
+  hideTypingIndicator();
+  addBotMessage(greeting);
+}
+
+function addUserMessage(text) {
+  const div = document.createElement('div');
+  div.className = 'bubble-row from-user';
+  div.innerHTML = `
+    <div class="avatar">U</div>
+    <div class="bubble-col">
+      <div class="bubble"><div class="bubble-text">${escapeHtml(text)}</div></div>
+      <div class="bubble-meta">
+        <button class="audio-btn" data-audio-text="${escapeHtml(text)}" onclick="playMessageAudio(this.dataset.audioText, this)">🔊 Listen</button>
+      </div>
+    </div>
+  `;
+  chatLog.appendChild(div);
+  chatLog.scrollTop = chatLog.scrollHeight;
+}
+
+function addBotMessage(text, extraHtml = '') {
+  const div = document.createElement('div');
+  div.className = 'bubble-row from-bot';
+  div.innerHTML = `
+    <div class="avatar avatar-bot"><img src="${COVE_LOGO_DATA_URL}" alt="Cove"></div>
+    <div class="bubble-col">
+      <div class="bubble">
+        <div class="bubble-text">${text}</div>
+        ${extraHtml ? `<div class="bubble-extra">${extraHtml}</div>` : ''}
+      </div>
+      <div class="bubble-meta">
+        <button class="audio-btn" data-audio-text="${escapeHtml(text)}" onclick="playMessageAudio(this.dataset.audioText, this)">🔊 Listen</button>
+      </div>
+    </div>
+  `;
+  chatLog.appendChild(div);
+  chatLog.scrollTop = chatLog.scrollHeight;
+}
+
+/* Send user text message handler */
+function sendTextMessage() {
+  if (chatBusy) return;
+  const input = document.getElementById('chat-input');
+  const text = input.value.trim();
+  if (!text) return;
+  input.value = '';
+  addUserMessage(text);
+  processUserMessage(text);
+}
+
+function askSuggested(text) {
+  if (chatBusy) return;
+  addUserMessage(text);
+  processUserMessage(text);
+}
+// add near chatLog declaration
+let chatBusy = false;
+
+/* Transient "the assistant is working" bubble, shown while waiting
+   on a backend reply — the default 'thinking' kind cycles through a
+   few status phrases with a sonar-ping icon; 'reading' and
+   'transcribing' reuse the same bubble with a different icon/labels
+   for document uploads and voice input. Lives at a fixed id so it's
+   trivial to find and remove the moment the real response, read
+   result, or transcript comes back (or the request fails). */
+const THINKING_PHRASES = {
+  thinking:      ['Thinking…', 'Reviewing your request…', 'Checking the details…', 'Almost there…'],
+  reading:       ['Reading your document…', 'Scanning the page…', 'Pulling out the details…'],
+  transcribing:  ['Transcribing your voice…', 'Listening back…', 'Turning that into text…']
+};
+let thinkingPhraseTimer = null;
+
+function showTypingIndicator(kind = 'thinking') {
+  hideTypingIndicator(); // only one at a time, and lets us switch kinds cleanly
+  const phrases = THINKING_PHRASES[kind] || THINKING_PHRASES.thinking;
+
+  const iconHtml = kind === 'reading'
+    ? `<div class="think-icon think-icon-scan"><span>📄</span><span class="think-icon-scanline"></span></div>`
+    : kind === 'transcribing'
+      ? `<div class="think-icon think-icon-wave"><span></span><span></span><span></span><span></span><span></span></div>`
+      : `<div class="think-icon think-icon-sonar"><span class="think-ring"></span><span class="think-ring"></span><span class="think-dot"></span></div>`;
+
+  const div = document.createElement('div');
+  div.className = 'bubble-row from-bot';
+  div.id = 'typing-indicator-row';
+  div.innerHTML = `
+    <div class="avatar avatar-bot avatar-thinking"><img src="${COVE_LOGO_DATA_URL}" alt="Cove"></div>
+    <div class="bubble-col">
+      <div class="bubble bubble-thinking">
+        ${iconHtml}
+        <span class="think-label" id="typing-indicator-label">${phrases[0]}</span>
+      </div>
+    </div>
+  `;
+  chatLog.appendChild(div);
+  chatLog.scrollTop = chatLog.scrollHeight;
+
+  // Cycle through phrases so a slow backend still visibly progresses
+  // instead of sitting frozen on one word.
+  let i = 0;
+  thinkingPhraseTimer = setInterval(() => {
+    i = (i + 1) % phrases.length;
+    const label = document.getElementById('typing-indicator-label');
+    if (!label) return;
+    label.classList.remove('think-label'); // restart the fade-in animation
+    void label.offsetWidth;
+    label.textContent = phrases[i];
+    label.classList.add('think-label');
+  }, 1900);
+}
+function hideTypingIndicator() {
+  if (thinkingPhraseTimer) {
+    clearInterval(thinkingPhraseTimer);
+    thinkingPhraseTimer = null;
+  }
+  const el = document.getElementById('typing-indicator-row');
+  if (el) el.remove();
+}
+
+function setChatBusy(isBusy) {
+  chatBusy = isBusy;
+  document.getElementById('chat-input').disabled = isBusy;
+  document.querySelector('.send-btn').disabled = isBusy;
+  document.getElementById('mic-btn').disabled = isBusy;
+  document.querySelectorAll('.quick-chip').forEach(c => c.disabled = isBusy);
+  document.querySelectorAll('.choice-card').forEach(c => c.disabled = isBusy);
+  if (isBusy) {
+    showTypingIndicator('thinking');
+  } else {
+    hideTypingIndicator();
+  }
+}
+
+
+
+
+function renderAssistantReply(data) {
+  // ------------------------------------------------------------
+  // 1. Emergency
+  // ------------------------------------------------------------
+  if (data.emergency_detected) {
+    goToEmergencyScreen(
+      data.emergency_reason || 'Emergency detected.',
+      data.output_text
+    );
+    return;
+  }
+
+  // ------------------------------------------------------------
+  // #. MCQ's
+  // ------------------------------------------------------------
+    if (data.status === 'needs_patient_type') { askNewPatientMCQ(); return; }
+    if (data.status === 'needs_visit_type') { askVisitTypeMCQ(); return; }
+
+  // ------------------------------------------------------------
+  // 2. Normal assistant response
+  // ------------------------------------------------------------
+  if (data.output_text) {
+    addBotMessage(data.output_text);
+  }
+
+  // ------------------------------------------------------------
+  // 3. New account password needed
+  // ------------------------------------------------------------
+  if (data.needs_password) {
+    const passwordHtml = `
+      <div class="password-prompt">
+        <input
+          id="chat-new-account-pass"
+          type="password"
+          placeholder="Create a password"
+        />
+        <button onclick="submitAccountPassword()">
+          Create account
+        </button>
+      </div>
+    `;
+
+    addBotMessage(
+      "Please create a password for your new account:",
+      passwordHtml
+    );
+  }
+
+  // ------------------------------------------------------------
+  // 4. Appointment slots
+  // ------------------------------------------------------------
+  if (Array.isArray(data.available_slots) && data.available_slots.length > 0) {
+    const slotsHtml = data.available_slots.map((slot, index) => {
+      const slotId = `slot-${Date.now()}-${index}`;
+
+      window.pendingSlots = window.pendingSlots || {};
+      window.pendingSlots[slotId] = slot;
+
+      return `
+        <button
+          class="choice-card"
+          onclick="selectSlotById('${slotId}')"
+        >
+          ${escapeHtml(slot.doctor || 'Doctor')}
+          — ${escapeHtml(slot.date || '')}
+          at ${escapeHtml(slot.time || '')}
+        </button>
+      `;
+    }).join('');
+
+    addBotMessage(
+      "Here are the available appointments:",
+      `<div class="msg-options">${slotsHtml}</div>`
+    );
+  }
+
+  // ------------------------------------------------------------
+  // 5. Existing appointments
+  // ------------------------------------------------------------
+  if (
+    Array.isArray(data.available_appointments) &&
+    data.available_appointments.length > 0
+  ) {
+    const appointmentHtml = data.available_appointments.map((appt, index) => {
+      const appointmentId = `appointment-${Date.now()}-${index}`;
+
+      window.pendingAppointments = window.pendingAppointments || {};
+      window.pendingAppointments[appointmentId] = appt;
+
+      return `
+        <button
+          class="choice-card"
+          onclick="selectAppointmentById('${appointmentId}')"
+        >
+          ${escapeHtml(appt.doctor || 'Appointment')}
+          — ${escapeHtml(appt.date || '')}
+          ${appt.time ? `at ${escapeHtml(appt.time)}` : ''}
+        </button>
+      `;
+    }).join('');
+
+    addBotMessage(
+      "Here are your appointments:",
+      `<div class="msg-options">${appointmentHtml}</div>`
+    );
+  }
+
+  // ------------------------------------------------------------
+  // 6. Appointment successfully confirmed
+  // ------------------------------------------------------------
+  if (data.confirmed_appointment) {
+    showConfirmationScreen(data.confirmed_appointment);
+  }
+}
+
+function selectSlotById(slotId) {
+  const slot = window.pendingSlots?.[slotId];
+
+  if (!slot) {
+    addBotMessage("Sorry, I couldn't find that appointment slot. Please try again.");
+    return;
+  }
+
+  selectSlot(slot);
+}
+
+function selectAppointmentById(appointmentId) {
+  const appointment = window.pendingAppointments?.[appointmentId];
+
+  if (!appointment) {
+    addBotMessage("Sorry, I couldn't find that appointment. Please try again.");
+    return;
+  }
+
+  selectAppointment(appointment.appointment_id);
+}
+
+/* Processes the message using the backend and triggers MCQ questions when booking*/
+async function processUserMessage(text) {
+  setChatBusy(true);
+  try {
+    const payload = {
+      thread_id: threadId,
+      message: text,
+      patient_id: patientState.patientId,
+      preferred_language: patientState.language,
+    };
+    if (patientState.isNewPatient !== null) payload.is_first_time = patientState.isNewPatient === true;
+    if (patientState.visitType !== null) payload.old_patient_follow_up = patientState.visitType === 'followup';
+
+    const data = await apiPost('/api/chat/message', payload);
+    renderAssistantReply(data);
+  } catch (err) {
+  console.error('...failed:', err);
+  addBotMessage(err.message || "Sorry, something went wrong. Please try again.");
+  } finally {
+    setChatBusy(false);
+  }
+}
+
+async function selectSlot(slot) {
+  addUserMessage(`${slot.doctor} on ${slot.date} at ${slot.time}`);
+  setChatBusy(true);
+  try {
+    const data = await apiPost('/api/chat/message', {
+      thread_id: threadId,
+      message: '',
+      patient_id: patientState.patientId,
+      selected_slot: slot,
+      preferred_language: patientState.language
+    });
+
+    renderAssistantReply(data);
+
+  } catch (err) {
+  console.error('...failed:', err);
+  addBotMessage(err.message || "Sorry, something went wrong. Please try again.");
+  } finally {
+    setChatBusy(false);
+  }
+}
+
+async function selectAppointment(appointmentId) {
+  addUserMessage('Selected that appointment.');
+  setChatBusy(true);
+  try {
+    const data = await apiPost('/api/chat/message', {
+      thread_id: threadId,
+      message: '',
+      patient_id: patientState.patientId,
+      existing_appointment_id: appointmentId,
+      preferred_language: patientState.language
+    });
+
+    renderAssistantReply(data);
+
+  } catch (err) {
+  console.error('...failed:', err);
+  addBotMessage(err.message || "Sorry, something went wrong. Please try again.");
+  } finally {
+    setChatBusy(false);
+  }
+}
+
+async function submitAccountPassword() {
+  const passwordInput = document.getElementById('chat-new-account-pass');
+  const password = passwordInput ? passwordInput.value : '';
+
+  if (!password) return;
+
+  addUserMessage('••••••••');
+  setChatBusy(true);
+  try {
+    const data = await apiPost('/api/chat/message', {
+      thread_id: threadId,
+      message: '',
+      patient_id: patientState.patientId,
+      new_account_password: password,
+      preferred_language: patientState.language
+    });
+
+    if (passwordInput) {
+      passwordInput.value = '';
+    }
+
+    renderAssistantReply(data);
+
+  } catch (err) {
+  console.error('...failed:', err);
+  addBotMessage(err.message || "Sorry, something went wrong. Please try again.");
+  } finally {
+    setChatBusy(false);
+  }
+}
+
+
+/* ==================================================================
+    MCQ's
+    Shown when the user's intent to book is detected.
+=================================================================== */
+/* MULTIPLE CHOICE QUESTION: "Are you a new patient?" */
+function askNewPatientMCQ() {
+  const mcqHtml = `
+    <div class="msg-options">
+      <button class="choice-card" onclick="handleNewPatientMCQResponse(true)">🌱 Yes, I am a new patient</button>
+      <button class="choice-card" onclick="handleNewPatientMCQResponse(false)">🔁 No, I am an existing patient</button>
+    </div>
+  `;
+  setTimeout(() => {
+    addBotMessage("To proceed with your request, I need to know your patient status.", mcqHtml);
+  }, 400);
+}
+
+function handleVisitTypeMCQResponse(type) {
+  // Save the answer in frontend state.
+  patientState.visitType = type;
+
+  // Show the patient's choice in the chat.
+  addUserMessage(
+    type === 'followup'
+      ? "Follow-up visit"
+      : "New visit"
+  );
+
+  // Re-run the current booking request with the newly known
+  // visit type.
+  processUserMessage('');
+}
+
+function handleNewPatientMCQResponse(isNew) {
+  // Save the answer in frontend state.
+  patientState.isNewPatient = isNew;
+
+  // Show the patient's choice in the chat.
+  addUserMessage(
+    isNew
+      ? "Yes, I am a new patient"
+      : "No, I am an existing patient"
+  );
+
+  // Existing patients need to log in before we can access
+  // their existing patient information.
+  if (!isNew && !patientState.isLoggedIn) {
+    patientState.pendingBookingAfterLogin = true;
+
+    addBotMessage(
+      "No problem — please log in so I can access your existing patient information."
+    );
+
+    openLoginModal();
+    return;
+  }
+
+  // Re-run the current booking request with the newly known
+  // patient status.
+  processUserMessage('');
+}
+
+/* MULTIPLE CHOICE QUESTION: "Is this a follow up or new visit?" */
+function askVisitTypeMCQ() {
+  const mcqHtml = `
+    <div class="msg-options">
+      <button class="choice-card" onclick="handleVisitTypeMCQResponse('followup')">📋 Follow-up visit</button>
+      <button class="choice-card" onclick="handleVisitTypeMCQResponse('new')">🆕 New visit</button>
+    </div>
+  `;
+  setTimeout(() => {
+    addBotMessage("Since you are an existing patient, please clarify your visit type:", mcqHtml);
+  }, 400);
+}
+
+/* ==================================================================
+   CONFIRMATION PAGE DISPLAY
+=================================================================== */
+function showConfirmationScreen(appt) {
+  lastConfirmedAppointment = appt;
+  document.getElementById('conf-doctor').textContent = appt.doctor || '—';
+  document.getElementById('conf-department').textContent = appt.department || '—';
+  document.getElementById('conf-datetime').textContent =
+    (appt.date && appt.time) ? `${appt.date} at ${appt.time}` : (appt.date || '—');
+  document.getElementById('pdf-conf-code').textContent = appt.appointment_id || '—';
+  if (appt.patient_name) {
+    document.getElementById('prof-name').value = appt.patient_name;
+  }
+
+  // Keep the front desk number in sync with the single constant
+  // above (also used when printing the PDF), rather than hardcoding
+  // it twice.
+  const deskLink = document.getElementById('front-desk-link');
+  const deskText = document.getElementById('front-desk-number-text');
+  if (deskLink) deskLink.href = `tel:${FRONT_DESK_PHONE_TEL}`;
+  if (deskText) deskText.textContent = FRONT_DESK_PHONE;
+
+  showScreen('screen-confirmation');
+
+  // Restart the checkmark draw-in animation every time this screen
+  // is shown, rather than only the first time (it's the same DOM
+  // node reused across bookings, so the keyframes won't replay on
+  // their own).
+  const checkWrap = document.getElementById('confirm-check-wrap');
+  if (checkWrap) {
+    checkWrap.classList.remove('is-animating');
+    void checkWrap.offsetWidth; // force reflow so the animation restarts
+    checkWrap.classList.add('is-animating');
+  }
+}
+
+/* ==================================================================
+   EMERGENCY PAGE DISPLAY
+=================================================================== */
+function goToEmergencyScreen(reason, outputText) {
+  document.getElementById('emergency-output-text').textContent =
+    outputText || "Emergency protocol triggered: Urgent attention required.";
+  document.getElementById('emergency-reason-text').textContent = reason;
+  showScreen('screen-emergency');
+}
+
+/* ==================================================================
+   PDF GENERATION (RAW JS PDF CREATOR)
+   Generates a downloadable PDF of confirmed appointment details.
+=================================================================== */
+function generateAppointmentPDF() {
+  const appt = lastConfirmedAppointment || {};
+  const doctor = appt.doctor || "Dr. Alana Reyes";
+  const department = appt.department || "Primary Care";
+  const date = (appt.date && appt.time) ? `${appt.date} at ${appt.time}` : "Tomorrow at 10:00 AM";
+  const code = appt.appointment_id || "COVE-8842";
+  const name = document.getElementById('prof-name').value || "Jane Doe";
+
+  // PDF string literals only allow escaping \, (, ) — anything else
+  // (accented characters etc.) is outside WinAnsi/Helvetica's basic
+  // range and gets stripped rather than risk corrupting the stream.
+  const pdfEscape = (s) => String(s)
+    .replace(/\\/g, '\\\\').replace(/\(/g, '\\(').replace(/\)/g, '\\)')
+    .replace(/[^\x20-\x7E]/g, '');
+
+  // Brand palette, matching the web app's CSS variables 1:1 so the
+  // PDF reads as the same product rather than a generic printout.
+  const TEAL       = '0.173 0.431 0.498';
+  const TEAL_DEEP   = '0.118 0.306 0.357';
+  const TEAL_TINT   = '0.863 0.918 0.918';
+  const SEAGLASS     = '0.435 0.663 0.545';
+  const SEAGLASS_TINT = '0.882 0.937 0.902';
+  const CORAL       = '0.851 0.388 0.310';
+  const CORAL_DEEP  = '0.725 0.290 0.224';
+  const CORAL_TINT  = '0.984 0.902 0.886';
+  const INK         = '0.086 0.196 0.243';
+  const INK_SOFT    = '0.322 0.439 0.482';
+  const WHITE       = '1 1 1';
+
+  // Five info rows, each rendered as its own card with a colored
+  // accent bar — cycling through the brand's accent colors so the
+  // page reads as organized sections rather than one dense block.
+  const rows = [
+    { label: 'PATIENT NAME', value: name,       accent: TEAL },
+    { label: 'DOCTOR',       value: doctor,     accent: SEAGLASS },
+    { label: 'DEPARTMENT',   value: department, accent: CORAL },
+    { label: 'DATE & TIME',  value: date,       accent: TEAL },
+    { label: 'LOCATION',     value: 'Main Campus, 2nd Floor', accent: SEAGLASS },
+  ];
+
+  const cardTop = 520, cardHeight = 54, cardGap = 14;
+  let cardsStream = '';
+  rows.forEach((row, i) => {
+    const top = cardTop - i * (cardHeight + cardGap);
+    const bottom = top - cardHeight;
+    cardsStream += `q\n1 1 1 rg\n50 ${bottom} 512 ${cardHeight} re\nf\nQ\n`;                 // card bg
+    cardsStream += `q\n${row.accent} rg\n50 ${bottom} 5 ${cardHeight} re\nf\nQ\n`;           // accent bar
+    cardsStream += `BT\n/F2 9 Tf\n${INK_SOFT} rg\n74 ${top - 19} Td\n(${pdfEscape(row.label)}) Tj\nET\n`;
+    cardsStream += `BT\n/F1 14 Tf\n${INK} rg\n74 ${top - 39} Td\n(${pdfEscape(row.value)}) Tj\nET\n`;
+  });
+
+  const contentStream = `q 0.957 0.973 0.969 rg 0 0 612 792 re f Q
+q ${SEAGLASS_TINT} rg 0 600 612 80 re f Q
+q ${TEAL} rg
+0 680 m
+612 680 l
+612 650 l
+520 670 460 630 380 645 c
+300 660 260 620 180 640 c
+100 660 60 630 0 650 c
+h f Q
+q ${TEAL} rg 0 680 612 112 re f Q
+q ${WHITE} rg 50 744 26 26 re f Q
+q ${TEAL} rg 59 749 8 16 re f Q
+q ${TEAL} rg 53 755 20 4 re f Q
+BT /F1 24 Tf ${WHITE} rg 92 750 Td (cove) Tj ET
+BT /F2 9.5 Tf ${TEAL_TINT} rg 50 718 Td (AI HOSPITAL FRONT DESK) Tj ET
+BT /F1 19 Tf ${WHITE} rg 50 692 Td (You're all set.) Tj ET
+q ${WHITE} rg 156 560 300 48 re f Q
+q ${CORAL} rg 156 560 5 48 re f Q
+BT /F2 9 Tf ${INK_SOFT} rg 178 594 Td (CONFIRMATION CODE) Tj ET
+BT /F1 20 Tf ${CORAL_DEEP} rg 178 570 Td (${pdfEscape(code)}) Tj ET
+${cardsStream}q ${CORAL_TINT} rg 50 95 512 70 re f Q
+q ${CORAL} rg 80 130 16 16 re f Q
+BT /F2 10 Tf ${INK_SOFT} rg 112 145 Td (Need to reschedule or have questions?) Tj ET
+BT /F1 15 Tf ${CORAL_DEEP} rg 112 122 Td (Front Desk: ${pdfEscape(FRONT_DESK_PHONE)}) Tj ET
+q ${TEAL_DEEP} rg 0 0 612 70 re f Q
+BT /F1 12 Tf ${WHITE} rg 50 40 Td (Thank you for choosing Cove Healthcare.) Tj ET
+BT /F2 9 Tf ${TEAL_TINT} rg 50 22 Td (cove \\267 AI Hospital Front Desk) Tj ET`;
+
+  const streamBytes = new TextEncoder().encode(contentStream).length;
+
+  // Build each object as its own string so we can record byte-accurate
+  // offsets for a proper xref table below — lets the PDF validate
+  // cleanly in strict readers, not just lenient ones that rebuild a
+  // missing xref by scanning the file.
+  const objBodies = [
+    null, // objects are 1-indexed
+    `1 0 obj\n<</Type /Catalog /Pages 2 0 R>>\nendobj\n`,
+    `2 0 obj\n<</Type /Pages /Kids [3 0 R] /Count 1>>\nendobj\n`,
+    `3 0 obj\n<</Type /Page /Parent 2 0 R /Resources << /Font << /F1 4 0 R /F2 6 0 R >> >> /MediaBox [0 0 612 792] /Contents 5 0 R>>\nendobj\n`,
+    `4 0 obj\n<</Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold>>\nendobj\n`,
+    `5 0 obj\n<</Length ${streamBytes}>>\nstream\n${contentStream}\nendstream\nendobj\n`,
+    `6 0 obj\n<</Type /Font /Subtype /Type1 /BaseFont /Helvetica>>\nendobj\n`
+  ];
+
+  let pdfString = '%PDF-1.4\n';
+  const offsets = [0];
+  for (let i = 1; i <= 6; i++) {
+    offsets[i] = new TextEncoder().encode(pdfString).length;
+    pdfString += objBodies[i];
+  }
+  const xrefStart = new TextEncoder().encode(pdfString).length;
+  let xref = `xref\n0 7\n0000000000 65535 f \n`;
+  for (let i = 1; i <= 6; i++) {
+    xref += String(offsets[i]).padStart(10, '0') + ' 00000 n \n';
+  }
+  pdfString += xref;
+  pdfString += `trailer\n<</Size 7 /Root 1 0 R>>\nstartxref\n${xrefStart}\n%%EOF`;
+
+  const blob = new Blob([pdfString], { type: 'application/pdf' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `Appointment_Confirmation_${code}.pdf`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+/* Helper string escaper */
+function escapeHtml(str) {
+  return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+</script>
+</body>
+</html>
