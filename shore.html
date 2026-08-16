@@ -897,7 +897,7 @@ p.lede { color: var(--ink-soft); font-size: 15px; line-height: 1.6; max-width: 4
             <div class="profile-card">
               <h4>Identity</h4>
               <div class="profile-row"><span class="field-label">Patient ID</span><input type="text" id="prof-patient-id" value="Not set" readonly></div>
-              <div class="profile-row"><span class="field-label">Full name</span><input type="text" id="prof-name" value="Jane Doe" readonly></div>
+              <div class="profile-row"><span class="field-label">Full name</span><input type="text" id="prof-name" value="Not Set" readonly></div>
               <div class="profile-row"><span class="field-label">Date of birth</span><input type="text" id="prof-dob" value="Not set" readonly></div>
               <div class="profile-row"><span class="field-label">Status</span><input type="text" id="prof-status" value="Not set" readonly></div>
               <div class="profile-row"><span class="field-label">Visit type</span><input type="text" id="prof-visit-type" value="Not set" readonly></div>
@@ -966,7 +966,7 @@ p.lede { color: var(--ink-soft); font-size: 15px; line-height: 1.6; max-width: 4
             <button class="quick-chip" onclick="askSuggested('I need to book an appointment')">📅 Book an appointment</button>
             <button class="quick-chip" onclick="askSuggested('What are your visiting hours?')">🕐 Hospital Policies</button>
             <button class="quick-chip" onclick="askSuggested('Can you help me understand a document?')">📄 Explain a document</button>
-            <button class="quick-chip" onclick="askSuggested('What insurance plans do you accept?')">💳 Cancel</button>
+            <button class="quick-chip" onclick="askSuggested('I need to cancel an appointment')">💳 Cancel</button>
             <button class="quick-chip" onclick="askSuggested('I need to reschedule my appointment')">🔁 Reschedule</button>
           </div>
         </div>
@@ -1579,7 +1579,7 @@ function completeLogin(isNewPatient, patientId, patient) {
   patientState.isLoggedIn = true;
   patientState.isNewPatient = isNewPatient;
   patientState.patientId = patientId;   // <-- new
-  patientState.patientInfo = patientInfo || null
+  patientState.patientInfo = patient || null
   document.getElementById('prof-status').value = isNewPatient ? 'New Patient' : 'Existing Patient';
   document.getElementById('prof-patient-id').value = patientId || 'Not set';
 
@@ -1650,6 +1650,7 @@ async function submitNewPatientRegistration() {
     }
     completeLogin(true, result.patientId);
     document.getElementById('prof-lang').value = patientState.languageLabel;
+    document.getElementById('prof-name').value = name;
     document.getElementById('prof-dob').value = dob;
     document.getElementById('prof-email').value = email;
     document.getElementById('prof-phone').value = phone;
@@ -1662,13 +1663,18 @@ async function submitNewPatientRegistration() {
       const formData = new FormData();
       formData.append('thread_id', threadId);
       formData.append('file', selectedInsuranceFile);
+      formData.append('patient_email', email);
       try {
         const res = await fetch(`${API_BASE_URL}/api/documents/upload`, { method: 'POST', body: formData });
         const data = await res.json();
-        if (res.ok && data.success) {
+        if (res.ok && data.success && data.insurance_extracted) {
           document.getElementById('prof-insurance').value = 'On file';
           const docCountEl = document.getElementById('prof-docs');
           if (docCountEl) docCountEl.value = data.doc_count;
+        } else if (res.ok && data.success) {
+          // OCR/upload succeeded but we couldn't confidently pull
+          // provider/ID off the card -- don't claim it's on file.
+          document.getElementById('prof-insurance').value = "Uploaded — couldn't auto-read details, please confirm in chat";
         } else {
           document.getElementById('prof-insurance').value = 'Upload failed — please resend in chat';
         }
@@ -2148,6 +2154,14 @@ function renderAssistantReply(data) {
     addBotMessage(data.output_text);
   }
 
+  if (data.patient_info) {
+  if (data.patient_info.name) document.getElementById('prof-name').value = data.patient_info.name;
+  if (data.patient_info.dob) document.getElementById('prof-dob').value = data.patient_info.dob;
+  if (data.patient_info.phone) document.getElementById('prof-phone').value = data.patient_info.phone;
+  if (data.patient_info.email) document.getElementById('prof-email').value = data.patient_info.email;
+  if (data.patient_info.insurance_provider) document.getElementById('prof-insurance').value = 'On file';
+}
+
   // ------------------------------------------------------------
   // 3. New account password needed
   // ------------------------------------------------------------
@@ -2234,6 +2248,13 @@ function renderAssistantReply(data) {
   // 6. Appointment successfully confirmed
   // ------------------------------------------------------------
   if (data.confirmed_appointment) {
+    if (data.confirmed_appointment.patient_id && !patientState.patientId) {
+      patientState.patientId = data.confirmed_appointment.patient_id;
+      patientState.isLoggedIn = true;
+      document.getElementById('prof-patient-id').value = data.confirmed_appointment.patient_id;
+      document.getElementById('prof-status').value = 'New Patient';
+      setAuthButtonsVisibility();
+    }
     showConfirmationScreen(data.confirmed_appointment);
   }
 }
@@ -2380,6 +2401,9 @@ function askNewPatientMCQ() {
 function handleVisitTypeMCQResponse(type) {
   // Save the answer in frontend state.
   patientState.visitType = type;
+
+  const visitTypeEl = document.getElementById('prof-visit-type');
+  if (visitTypeEl) visitTypeEl.value = type === 'followup' ? 'Follow-up visit' : 'New visit';
 
   // Show the patient's choice in the chat.
   addUserMessage(

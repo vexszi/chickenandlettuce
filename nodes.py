@@ -3,12 +3,11 @@ from google import genai
 from dotenv import load_dotenv
 
 from state import HospitalState
-from schemas import IntentAndExtraction
+from schemas import IntentAndExtraction, PatientInfoExtraction
 from tools import translate_incoming_tool, translate_outgoing_tool
 from policy import retrieve
 from book import (book_appointment_flow,_upcoming_appointments, confirm_booking, find_available_slots,get_appointments)
 from auth import delete_appointment
-
 
 load_dotenv()
 GEMINI_KEY = os.getenv("flash_key")
@@ -111,12 +110,30 @@ verbatim, or ask again for something already covered earlier in this \
 session.
 """
 def intent_guardrail_extraction_node(state: HospitalState) -> dict:
+    incoming_message = state["messages"][-1].content if state.get("messages") else ""
+
+    if not incoming_message.strip():
+        return {
+            "intent": state.get("intent", "book_appointment"),
+            "guardrail_triggered": False,
+            "emergency_detected": False,
+        }
+
     text = state.get("masked_text", "")
     history = _recent_history(state)
 
+    doc_text = state.get("masked_document_text", "")
+    doc_context = (
+        f"\nText extracted from a document/photo the patient uploaded "
+        f"(e.g. an insurance card) -- pull name, insurance provider, and "
+        f"insurance/member ID from this if present, same as if the patient "
+        f"had typed it:\n{doc_text}\n"
+        if doc_text else ""
+    )
+
     response = _safe_generate_content(
         model=GEMINI_MODEL,
-        contents=f"{SYSTEM_PROMPT}\n\n{history}Patient's newest message:\n{text}",
+        contents=f"{SYSTEM_PROMPT}\n\n{history}{doc_context}Patient's newest message:\n{text}",
         config={
             "response_mime_type": "application/json",
             "response_schema": IntentAndExtraction,
@@ -176,6 +193,37 @@ def intent_guardrail_extraction_node(state: HospitalState) -> dict:
         updates["available_slots"] = None
 
     return updates
+
+# ---------------------------------------------------------------------------
+# Standalone extraction, NOT a graph node. Called directly by main.py's
+# signup upload endpoint, which happens BEFORE any chat turn exists and so
+# never runs through intent_guardrail_extraction_node. Reuses the same
+# schema/model as that node so behavior stays consistent between "insurance
+# card uploaded mid-chat" and "insurance card uploaded at signup."
+# ---------------------------------------------------------------------------
+def extract_insurance_from_text(document_text: str) -> dict:
+    if not document_text:
+        return {}
+
+    prompt = f"""Extract the patient's name, insurance provider, and \
+insurance/member ID number from this insurance card text, if present. \
+Leave a field null if it isn't clearly present -- do not guess or invent \
+placeholder values.
+
+Card text:
+{document_text}
+"""
+    response = _safe_generate_content(
+        model=GEMINI_MODEL,
+        contents=prompt,
+        config={
+            "response_mime_type": "application/json",
+            "response_schema": PatientInfoExtraction,
+        },
+    )
+    if response is None or response.parsed is None:
+        return {}
+    return response.parsed.model_dump(exclude_none=True)
 
 
 #----------------------------------------------------------------------------

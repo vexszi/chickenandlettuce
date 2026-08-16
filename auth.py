@@ -32,7 +32,14 @@ def _hash_password(password: str, salt: str) -> str:
         "sha256", password.encode(), salt.encode(), 100_000
     ).hex()
 
-def register_patient(email: str, password: str, name: str, patient_id: Optional[str] = None) -> str:
+def register_patient(
+    email: str,
+    password: str,
+    name: str,
+    dob: Optional[str] = None,
+    phone: Optional[str] = None,
+    patient_id: Optional[str] = None,
+) -> str:
     """Creates a new patient record. Returns the new patient_id.
     Raises ValueError if the email is already registered."""
     patients = _load(PATIENTS_FILE)
@@ -49,8 +56,8 @@ def register_patient(email: str, password: str, name: str, patient_id: Optional[
         "password_hash": _hash_password(password, salt),
         "salt": salt,
         "name": name,
-        "dob": None,
-        "phone": None,
+        "dob": dob,
+        "phone": phone,
         "email": email,
         "insurance_provider": None,
         "insurance_id": None,
@@ -141,3 +148,25 @@ def get_doctor_appointments(doctor_name: str) -> list:
                 doctor_appts.append(appt)
 
     return doctor_appts
+
+def update_patient_insurance(email: str, insurance_provider: Optional[str], insurance_id: Optional[str]) -> bool:
+    """Patches insurance fields onto an existing patient record. Used by
+    the signup flow, which uploads the insurance card photo AFTER the
+    account already exists and doesn't go through the graph at all --
+    so intent_guardrail_extraction_node never runs for it. Returns True
+    if anything was actually written."""
+    patients = _load(PATIENTS_FILE)
+    if email not in patients:
+        return False
+
+    wrote_something = False
+    if insurance_provider:
+        patients[email]["insurance_provider"] = insurance_provider
+        wrote_something = True
+    if insurance_id:
+        patients[email]["insurance_id"] = insurance_id
+        wrote_something = True
+
+    if wrote_something:
+        _save(PATIENTS_FILE, patients)
+    return wrote_something

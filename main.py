@@ -11,9 +11,10 @@ from langchain_core.messages import HumanMessage
 import threading
 from collections import defaultdict
 
-from auth import register_patient, login
+from auth import register_patient, login, update_patient_insurance
 from hospital_graph import graph
 from tools import ocr_tool, translate_outgoing_tool, transcription_tool, tts_tool
+from nodes import extract_insurance_from_text
 
 app = FastAPI()
 from fastapi.middleware.cors import CORSMiddleware
@@ -81,7 +82,8 @@ class RegisterRequest(BaseModel):
     name: str
     email: str
     password: str
-
+    dob: Optional[str] = None
+    phone: Optional[str] = None
 
 class LoginRequest(BaseModel):
     email: str
@@ -121,7 +123,10 @@ DEFAULT_GREETING = (
 @app.post("/api/patients/register")
 def api_register(req: RegisterRequest):
     try:
-        patient_id = register_patient(email=req.email, password=req.password, name=req.name)
+        patient_id = register_patient(
+            email=req.email, password=req.password, name=req.name,
+            dob=req.dob, phone=req.phone,
+        )
         return {"success": True, "patientId": patient_id}
     except ValueError as e:
         return {"success": False, "reason": str(e)}
@@ -185,23 +190,28 @@ def api_chat(req: ChatRequest):
     state["messages"].append(HumanMessage(content=req.message))
     state["messages"] = state["messages"][-20:]  # keep the session lean
 
+    prev_available_slots = state.get("available_slots")
+    prev_available_appointments = state.get("available_appointments")
+
     result = graph.invoke(state)
 
     # Merge this turn's updates into the saved session for next time.
     state.update(result)
 
-    # Log this turn (PII-masked patient side, translated assistant side) so
-    # the Gemini-calling nodes in nodes.py can see recent conversation
-    # context on the *next* turn, instead of only ever seeing the current
-    # message in isolation. Kept short (last ~6 exchanges) so it doesn't
-    # balloon the prompt or the token bill.
+    new_available_slots = result.get("available_slots")
+    new_available_appointments = result.get("available_appointments")
+    slots_for_response = new_available_slots if new_available_slots != prev_available_slots else None
+    appointments_for_response = new_available_appointments if new_available_appointments != prev_available_appointments else None
+
     patient_line = state.get("masked_text") or req.message
     assistant_line = result.get("output_text")
     log_additions = [f"Patient: {patient_line}"]
     if assistant_line:
         log_additions.append(f"Assistant: {assistant_line}")
     state["conversation_log"] = (state.get("conversation_log", []) + log_additions)[-12:]
-    if result.get("status") == "complete":
+    if result.get("status") == "complete" and result.get("intent") in (
+        "book_appointment", "cancel_appointment", "reschedule_appointment",
+    ):
         for key in (
             "selected_slot", "available_slots", "available_appointments",
             "booking_checklist", "department", "requested_doctor_name",
@@ -218,12 +228,13 @@ def api_chat(req: ChatRequest):
     return {
         "output_text": result.get("output_text"),
         "status": result.get("status"),
-        "available_slots": result.get("available_slots"),
-        "available_appointments": result.get("available_appointments"),
+        "available_slots": slots_for_response,
+        "available_appointments": appointments_for_response,
         "needs_password": result.get("needs_password", False),
         "emergency_detected": result.get("emergency_detected", False),
         "emergency_reason": result.get("emergency_reason"),
         "confirmed_appointment": result.get("confirmed_appointment"),
+        "patient_info": result.get("patient_info"),
     }
 
 
@@ -252,7 +263,11 @@ def api_greeting(req: GreetingRequest):
 # document_explainer_node once the patient asks about it.
 # ---------------------------------------------------------------------------
 @app.post("/api/documents/upload")
-async def api_upload_document(thread_id: str = Form(...), file: UploadFile = File(...)):
+async def api_upload_document(
+    thread_id: str = Form(...),
+    file: UploadFile = File(...),
+    patient_email: Optional[str] = Form(None),
+):
     suffix = os.path.splitext(file.filename or "")[1] or ".bin"
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
         tmp.write(await file.read())
@@ -271,7 +286,34 @@ async def api_upload_document(thread_id: str = Form(...), file: UploadFile = Fil
     SESSIONS[thread_id] = state
     _save_sessions()
 
-    return {"success": True, "doc_count": len(state["ocr_text"])}
+    response = {"success": True, "doc_count": len(state["ocr_text"])}
+
+    # patient_email is only sent by the signup flow (submitNewPatientRegistration
+    # in shore.html), which uploads the card right after account creation and
+    # BEFORE any chat message exists -- so there's no graph turn to run
+    # intent_guardrail_extraction_node and pick up insurance fields the normal
+    # way. Extract directly and patch the record instead.
+    if patient_email:
+        extracted = extract_insurance_from_text(extracted_text)
+        wrote = update_patient_insurance(
+            email=patient_email,
+            insurance_provider=extracted.get("insurance_provider"),
+            insurance_id=extracted.get("insurance_id"),
+        )
+        response["insurance_extracted"] = wrote
+        response["insurance_provider"] = extracted.get("insurance_provider")
+        response["insurance_id"] = extracted.get("insurance_id")
+
+        # Also seed this thread's patient_info so if the patient later
+        # chats before logging in again, it's already there.
+        if wrote:
+            state["patient_info"] = {**state.get("patient_info", {}), **{
+                k: v for k, v in extracted.items() if k in ("insurance_provider", "insurance_id")
+            }}
+            SESSIONS[thread_id] = state
+            _save_sessions()
+
+    return response
 
 # ---------------------------------------------------------------------------
 # Reset conversation session

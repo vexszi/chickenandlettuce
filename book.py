@@ -181,6 +181,11 @@ def _handle_new_or_returning(state: HospitalState, checklist: dict, patient_type
         missing += pii_missing
 
     # Step 2: symptoms (gender preference is optional -- mentioned once, never required)
+    if not state.get("symptoms") and checklist.get("symptoms_and_gender") is False:
+        raw_message = state.get("masked_text", "").strip()
+        if raw_message and len(raw_message) > 3:
+            state = {**state, "symptoms": raw_message}
+
     if not state.get("symptoms"):
         missing.append("main symptoms")
     checklist["symptoms_and_gender"] = bool(state.get("symptoms"))
