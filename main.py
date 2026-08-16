@@ -141,10 +141,19 @@ def api_login(req: LoginRequest):
     if record is None:
         return {"success": False, "reason": "Invalid email or password."}
     return {
-        "success": True,
-        "patientId": record["patient_id"],
-        "patientInfo": record,  # name, email, phone, dob, insurance, etc.
-    }
+    "success": True,
+    "patientId": record["patient_id"],
+    "patientInfo": {
+        "name": record.get("name"),
+        "dob": record.get("dob"),
+        "phone": record.get("phone"),
+        "email": record.get("email"),
+        "insurance_provider": record.get("insurance_provider"),
+        "insurance_id": record.get("insurance_id"),
+        "address": record.get("address"),
+        "gender_pref": record.get("gender_pref"),
+    },
+}
 
 
 # ---------------------------------------------------------------------------

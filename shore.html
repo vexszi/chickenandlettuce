@@ -1215,7 +1215,10 @@ const patientState = {
   sidebarOpen: true,
 
   pendingAppointmentAction: null,
-  pendingBookingAfterLogin: false
+  pendingBookingAfterLogin: false,
+
+  patientInfo: null,
+  symptoms: null,
 };
 
 // Single source of truth for the front desk's number — shown on the
@@ -1232,6 +1235,12 @@ const SUPPORTED_LANGUAGES = {
   zh: 'Chinese', hi: 'Hindi'
 };
 
+function clearChatInput() {
+    const input = document.getElementById('chat-input');
+    if (input) {
+        input.value = '';
+    }
+}
 // Official Cove logo — used as the brand mark throughout the app and
 // as the assistant's chat avatar. Inlined as a data URI so the app
 // stays a single self-contained file with no external asset request.
@@ -1397,6 +1406,7 @@ async function resetBackendSession() {
 
 function resetConversation() {
   patientState.patientId = null;
+  patientState.patientInfo = null;
   patientState.isNewPatient = null;
   patientState.visitType = null;
   patientState.symptoms = null;
@@ -2306,6 +2316,7 @@ async function processUserMessage(text) {
 }
 
 async function selectSlot(slot) {
+  clearChatInput()
   addUserMessage(`${slot.doctor} on ${slot.date} at ${slot.time}`);
   setChatBusy(true);
   try {
@@ -2328,6 +2339,7 @@ async function selectSlot(slot) {
 }
 
 async function selectAppointment(appointmentId) {
+  clearChatInput()
   addUserMessage('Selected that appointment.');
   setChatBusy(true);
   try {
@@ -2387,6 +2399,7 @@ async function submitAccountPassword() {
 =================================================================== */
 /* MULTIPLE CHOICE QUESTION: "Are you a new patient?" */
 function askNewPatientMCQ() {
+  clearChatInput()
   const mcqHtml = `
     <div class="msg-options">
       <button class="choice-card" onclick="handleNewPatientMCQResponse(true)">🌱 Yes, I am a new patient</button>
@@ -2448,6 +2461,7 @@ function handleNewPatientMCQResponse(isNew) {
 
 /* MULTIPLE CHOICE QUESTION: "Is this a follow up or new visit?" */
 function askVisitTypeMCQ() {
+  clearChatInput()
   const mcqHtml = `
     <div class="msg-options">
       <button class="choice-card" onclick="handleVisitTypeMCQResponse('followup')">📋 Follow-up visit</button>

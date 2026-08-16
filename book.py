@@ -135,6 +135,7 @@ def _handle_followup(state: HospitalState, checklist: dict) -> dict:
             "available_appointments": upcoming,
             "booking_checklist": checklist,
             "status": "awaiting_input",
+            "output_text": None,
         }
     checklist["which_appointment"] = True
 
@@ -152,7 +153,7 @@ def _handle_followup(state: HospitalState, checklist: dict) -> dict:
             "status": "awaiting_input",
         }
 
-    return {"booking_checklist": checklist, "status": "complete"}
+    return {"booking_checklist": checklist, "status": "complete", "output_text": None,}
 
 
 # ---------------------------------------------------------------------------
@@ -180,32 +181,29 @@ def _handle_new_or_returning(state: HospitalState, checklist: dict, patient_type
         checklist["pii_collection"] = len(pii_missing) == 0
         missing += pii_missing
 
-    # Step 2: symptoms (gender preference is optional -- mentioned once, never required)
-    if not state.get("symptoms") and checklist.get("symptoms_and_gender") is False:
-        raw_message = state.get("masked_text", "").strip()
-        if raw_message and len(raw_message) > 3:
-            state = {**state, "symptoms": raw_message}
-
+    # Step 2: symptoms
     if not state.get("symptoms"):
-        missing.append("main symptoms")
-    checklist["symptoms_and_gender"] = bool(state.get("symptoms"))
-
-    if missing:
-        message = _ask_for(missing, state)
-        if not checklist.get("gender_mentioned"):
-            message += " If you have a preference for a male or female doctor, feel free to mention it -- totally optional."
-            checklist["gender_mentioned"] = True
         return {
             "booking_checklist": checklist,
-            "output_text": message,
+            "output_text": _ask_for(["main symptoms"], state),
             "status": "awaiting_input",
         }
 
-    # Step 3: department (automatic, no human input)
+    checklist["symptoms_and_gender"] = True
+
+    # Step 3: department
     if not checklist["department"]:
         decision = _decide_department(state)
+
+        if not decision.get("department"):
+            return {
+                "booking_checklist": checklist,
+                "output_text": "I need your symptoms before I can find the right department and doctor.",
+                "status": "awaiting_input",
+            }
+
         checklist["department"] = True
-        state = {**state, **decision}   # so Step 4 below can see the new department
+        state.update(decision)
 
     # Step 4: find open slots across the candidate doctors
     if not state.get("available_slots"):
@@ -221,6 +219,7 @@ def _handle_new_or_returning(state: HospitalState, checklist: dict, patient_type
             "available_slots": slots,
             "department": state.get("department"),
             "booking_checklist": checklist,
+            "output_text": None,
             "status": "awaiting_input",
         }
     
@@ -255,11 +254,13 @@ def _handle_new_or_returning(state: HospitalState, checklist: dict, patient_type
 # Automatic step, no human input: picks a department from symptoms.
 # ---------------------------------------------------------------------------
 def _decide_department(state: HospitalState) -> dict:
-    symptoms = state.get("symptoms", "")
+    symptoms = state.get("symptoms")
+
+    if not symptoms or not symptoms.strip():
+        return {"department": None}
+
     requested_doctor = state.get("requested_doctor_name")
-
     doctors = _load_doctors()
-
     # If a specific doctor was named and actually exists, skip guessing --
     # just use their department directly.
     if requested_doctor and requested_doctor in doctors:
