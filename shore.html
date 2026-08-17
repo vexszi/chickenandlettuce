@@ -153,6 +153,15 @@ p.lede { color: var(--ink-soft); font-size: 15px; line-height: 1.6; max-width: 4
 .btn-ghost { background: transparent; color: var(--teal); border: 1.5px solid var(--line); }
 .btn-ghost:hover { border-color: var(--teal); background: var(--teal-tint); transform: translateY(-1px); }
 .btn-block { width: 100%; }
+.welcome-auth-hint {
+  margin-top: 4px; font-size: 13px; color: var(--ink-soft); text-align: center;
+}
+.link-btn {
+  background: none; border: none; padding: 0; margin: 0;
+  color: var(--teal); font-weight: 700; font-size: 13px;
+  text-decoration: underline; cursor: pointer;
+}
+.link-btn:hover { color: var(--teal-deep); }
 .btn-emergency {
   background: linear-gradient(135deg, var(--coral) 0%, var(--coral-deep) 100%);
   color: var(--white); box-shadow: 0 6px 18px rgba(217,99,79,0.35);
@@ -420,6 +429,19 @@ p.lede { color: var(--ink-soft); font-size: 15px; line-height: 1.6; max-width: 4
 .bubble-row.from-bot .bubble { background: var(--white); border: 1px solid var(--line); border-top-left-radius: 4px; }
 .bubble-row.from-user .bubble { background: var(--teal); color: var(--white); border-top-right-radius: 4px; box-shadow: none; }
 
+/* Structured bot replies — used for organized answers about uploaded
+   documents (prescriptions, insurance cards, etc.) so results read as
+   distinct points rather than one dense paragraph. See formatBotText(). */
+.bubble-text .bubble-para { margin: 0 0 8px 0; }
+.bubble-text .bubble-para:last-child { margin-bottom: 0; }
+.bubble-text .bubble-heading { font-weight: 700; margin: 10px 0 4px 0; color: var(--teal-deep); }
+.bubble-text .bubble-heading:first-child { margin-top: 0; }
+.bubble-text .bubble-list { margin: 4px 0 10px 0; padding-left: 20px; }
+.bubble-text .bubble-list:last-child { margin-bottom: 0; }
+.bubble-text .bubble-list li { margin-bottom: 4px; }
+.bubble-text .bubble-list li:last-child { margin-bottom: 0; }
+.bubble-text strong { font-weight: 700; }
+
 /* ==================================================================
    THINKING / PROCESSING INDICATOR — the signature "the assistant is
    working" moment. Shown as a transient bot bubble any time we're
@@ -679,6 +701,13 @@ p.lede { color: var(--ink-soft); font-size: 15px; line-height: 1.6; max-width: 4
   box-shadow: var(--shadow-lift); width: 100%; max-width: 400px;
   padding: 28px; text-align: center;
 }
+.welcome-auth-popup-card { position: relative; padding-top: 36px; }
+.welcome-auth-popup-close {
+  position: absolute; top: 12px; right: 14px;
+  background: none; border: none; font-size: 22px; line-height: 1;
+  color: var(--ink-soft); cursor: pointer; padding: 4px;
+}
+.welcome-auth-popup-close:hover { color: var(--ink); }
 
 /* Water-fill "start over" transition. A fixed, full-screen, click-
    through overlay: two wave layers slide up from the bottom to cover
@@ -863,6 +892,18 @@ p.lede { color: var(--ink-soft); font-size: 15px; line-height: 1.6; max-width: 4
         </div>
 
         <button class="btn btn-primary btn-block" id="btn-continue-welcome" disabled onclick="enterMainChatInterface()">Accept &amp; Continue</button>
+
+        <!-- Lets a brand-new patient jump straight to account creation
+             from the very first screen, instead of only discovering
+             it later inside the chat header. Opens the same full-screen
+             login/signup interface used everywhere else, pre-set to
+             the signup panel. -->
+        <p class="welcome-auth-hint">
+          Already a patient, or want to set up your account first?
+          <button type="button" class="link-btn" onclick="openLoginModal('login')">Log in</button>
+          &nbsp;or&nbsp;
+          <button type="button" class="link-btn" onclick="openLoginModal('signup')">Create an account</button>
+        </p>
       </div>
     </div>
   </section>
@@ -935,9 +976,15 @@ p.lede { color: var(--ink-soft); font-size: 15px; line-height: 1.6; max-width: 4
             <!-- Log in / Create account — prominent (always visible,
                  in the header) but no longer parked awkwardly at the
                  top of a panel the patient might have collapsed. -->
-            <button class="header-auth-btn" id="header-login-btn" title="Log in or create an account" onclick="openLoginModal()">
+            <button class="header-auth-btn" id="header-login-btn" title="Log in" onclick="openLoginModal('login')">
               <span class="header-auth-dot" aria-hidden="true"></span>
               <span class="header-auth-label-full">Log in</span>
+            </button>
+            <!-- Sits right next to Log in, same styling, so it's
+                 obvious the two lead to different places. -->
+            <button class="header-auth-btn header-auth-btn-signup" id="header-signup-btn" title="Create an account" onclick="openLoginModal('signup')">
+              <span class="header-auth-dot" aria-hidden="true"></span>
+              <span class="header-auth-label-full">Create account</span>
             </button>
             <div class="header-auth-chip" id="header-auth-chip">✅ Logged in</div>
 
@@ -1145,13 +1192,39 @@ p.lede { color: var(--ink-soft); font-size: 15px; line-height: 1.6; max-width: 4
           <input type="password" id="signup-pass-input" placeholder="••••••••" autocomplete="new-password">
         </div>
         <div class="field">
-          <label for="signup-insurance-input">Photo of insurance card</label>
-          <input type="file" id="signup-insurance-input" accept=".jpg,.jpeg,.png,.pdf" onchange="handleInsurancePhotoSelected(event)">
-          <p class="scan-status" id="signup-insurance-filename" style="text-align:left;">&nbsp;</p>
+          <label for="signup-insurance-front-input">Photo of insurance card — front</label>
+          <input type="file" id="signup-insurance-front-input" accept=".jpg,.jpeg,.png,.pdf" onchange="handleInsurancePhotoSelected(event, 'front')">
+          <p class="scan-status" id="signup-insurance-front-filename" style="text-align:left;">&nbsp;</p>
+        </div>
+        <div class="field">
+          <label for="signup-insurance-back-input">Photo of insurance card — back</label>
+          <input type="file" id="signup-insurance-back-input" accept=".jpg,.jpeg,.png,.pdf" onchange="handleInsurancePhotoSelected(event, 'back')">
+          <p class="scan-status" id="signup-insurance-back-filename" style="text-align:left;">&nbsp;</p>
         </div>
         <button class="btn btn-primary btn-block" id="signup-submit-btn" onclick="submitNewPatientRegistration()">Create account</button>
         <p class="scan-status" id="signup-error-text" style="display:none;color:var(--coral);">&nbsp;</p>
         <button type="button" class="btn btn-ghost btn-block" onclick="showLoginPasswordPanel()">Already have an account? Log in</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================================
+       MODAL — LOG IN / CREATE ACCOUNT PROMPT
+       Shown once, right after the patient first lands on the main
+       assistant screen (see enterMainChatInterface()). Dismissible
+       with the × so it never blocks someone who just wants to chat
+       as a guest. Only shown if the patient isn't already logged in.
+  ============================================================= -->
+  <div class="confirm-modal-overlay" id="welcome-auth-popup-overlay">
+    <div class="confirm-modal-card welcome-auth-popup-card">
+      <button type="button" class="welcome-auth-popup-close" aria-label="Close" onclick="closeWelcomeAuthPopup()">×</button>
+      <img class="brand-logo-hero" style="width:48px;height:48px;margin-bottom:10px;" src="" data-cove-logo alt="Cove">
+      <h2 class="display" style="font-size:20px; margin-bottom:6px;">Log in or create an account</h2>
+      <p style="font-size:13.5px; color:var(--ink-soft); margin-bottom:18px;">Logging in lets us skip questions we already know the answer to. You can also continue as a guest and do this later.</p>
+      <div class="stack">
+        <button class="btn btn-primary btn-block" onclick="closeWelcomeAuthPopup(); openLoginModal('login');">Log in</button>
+        <button class="btn btn-primary btn-block header-auth-btn-signup-modal" onclick="closeWelcomeAuthPopup(); openLoginModal('signup');">Create account</button>
+        <button class="btn btn-ghost btn-block" style="border:none;" onclick="closeWelcomeAuthPopup()">Continue as guest</button>
       </div>
     </div>
   </div>
@@ -1310,9 +1383,21 @@ async function enterMainChatInterface() {
 
   showScreen('screen-main');
   await showGreeting();
+  openWelcomeAuthPopup();
 
   btn.disabled = false;
   btn.dataset.busy = 'false';
+}
+
+/* Log in / create account popup shown once on entering the main
+   assistant interface — skipped entirely if the patient is already
+   logged in (e.g. returning from the login screen). */
+function openWelcomeAuthPopup() {
+  if (patientState.isLoggedIn) return;
+  document.getElementById('welcome-auth-popup-overlay').classList.add('is-visible');
+}
+function closeWelcomeAuthPopup() {
+  document.getElementById('welcome-auth-popup-overlay').classList.remove('is-visible');
 }
 
 /* ==================================================================
@@ -1330,8 +1415,10 @@ function toggleSidebar() {
    visible either way. */
 function setAuthButtonsVisibility() {
   const loginBtn = document.getElementById('header-login-btn');
+  const signupBtn = document.getElementById('header-signup-btn');
   const chip = document.getElementById('header-auth-chip');
   if (loginBtn) loginBtn.style.display = patientState.isLoggedIn ? 'none' : 'flex';
+  if (signupBtn) signupBtn.style.display = patientState.isLoggedIn ? 'none' : 'flex';
   if (chip) chip.style.display = patientState.isLoggedIn ? 'flex' : 'none';
 }
 
@@ -1441,6 +1528,7 @@ function resetConversation() {
   document.getElementById('prof-lang').value = 'English';
   document.getElementById('prof-docs').value = '0';
 
+  closeWelcomeAuthPopup();
   // Close the login interface if it happened to be open, and reset
   // it back to the password panel with cleared fields for next time.
   closeLoginModal();
@@ -1459,11 +1547,16 @@ function resetConversation() {
   if (signupPhone) signupPhone.value = '';
   const signupPass = document.getElementById('signup-pass-input');
   if (signupPass) signupPass.value = '';
-  const signupInsurance = document.getElementById('signup-insurance-input');
-  if (signupInsurance) signupInsurance.value = '';
-  const signupInsuranceFilename = document.getElementById('signup-insurance-filename');
-  if (signupInsuranceFilename) signupInsuranceFilename.textContent = '\u00A0';
+  const signupInsuranceFront = document.getElementById('signup-insurance-front-input');
+  if (signupInsuranceFront) signupInsuranceFront.value = '';
+  const signupInsuranceFrontFilename = document.getElementById('signup-insurance-front-filename');
+  if (signupInsuranceFrontFilename) signupInsuranceFrontFilename.textContent = '\u00A0';
+  const signupInsuranceBack = document.getElementById('signup-insurance-back-input');
+  if (signupInsuranceBack) signupInsuranceBack.value = '';
+  const signupInsuranceBackFilename = document.getElementById('signup-insurance-back-filename');
+  if (signupInsuranceBackFilename) signupInsuranceBackFilename.textContent = '\u00A0';
   selectedInsuranceFile = null;
+  selectedInsuranceFileBack = null;
   hideLoginError();
   hideSignupError();
   setLoginButtonBusy(false);
@@ -1482,8 +1575,12 @@ function resetConversation() {
 /* ==================================================================
    LOGIN — FULL-SCREEN INTERFACE
 =================================================================== */
-function openLoginModal() {
-  showLoginPasswordPanel();
+function openLoginModal(panel = 'login') {
+  if (panel === 'signup') {
+    showLoginSignupPanel();
+  } else {
+    showLoginPasswordPanel();
+  }
   document.getElementById('login-interface-overlay').classList.add('is-visible');
 }
 function closeLoginModal() {
@@ -1619,15 +1716,21 @@ function completeLogin(isNewPatient, patientId, patient) {
 /* Collects the sign-up form and hands it to the backend register_patient
    call. This is the one place in the whole app that registers a brand
    new patient record. */
-/* Holds the File object picked in the insurance-card input — kept in
-   JS state (not just the <input>) so it survives the panel switching
-   and can be uploaded as a separate step right after registration. */
-let selectedInsuranceFile = null;
+/* Holds the File objects picked in the front/back insurance-card
+   inputs — kept in JS state (not just the <input>s) so they survive
+   the panel switching and can be uploaded as a separate step right
+   after registration. */
+let selectedInsuranceFile = null;      // front (kept for back-compat)
+let selectedInsuranceFileBack = null;
 
-function handleInsurancePhotoSelected(event) {
+function handleInsurancePhotoSelected(event, side = 'front') {
   const file = event.target.files?.[0];
-  const label = document.getElementById('signup-insurance-filename');
-  selectedInsuranceFile = file || null;
+  const label = document.getElementById(`signup-insurance-${side}-filename`);
+  if (side === 'back') {
+    selectedInsuranceFileBack = file || null;
+  } else {
+    selectedInsuranceFile = file || null;
+  }
   if (label) label.textContent = file ? file.name : '\u00A0';
 }
 
@@ -1643,8 +1746,8 @@ async function submitNewPatientRegistration() {
     showSignupError("Please fill in your name, date of birth, email, phone number, and a password before creating an account.");
     return;
   }
-  if (!selectedInsuranceFile) {
-    showSignupError("Please upload a photo of your insurance card.");
+  if (!selectedInsuranceFile || !selectedInsuranceFileBack) {
+    showSignupError("Please upload photos of both the front and back of your insurance card.");
     return;
   }
 
@@ -1666,30 +1769,44 @@ async function submitNewPatientRegistration() {
     document.getElementById('prof-phone').value = phone;
     addBotMessage(`Your account has been created (Patient ID: ${result.patientId}).`);
 
-    // Upload the insurance card photo now that we have a thread to
-    // attach it to — reuses the same OCR/document pipeline as the
-    // in-chat document upload.
-    if (selectedInsuranceFile) {
-      const formData = new FormData();
-      formData.append('thread_id', threadId);
-      formData.append('file', selectedInsuranceFile);
-      formData.append('patient_email', email);
-      try {
-        const res = await fetch(`${API_BASE_URL}/api/documents/upload`, { method: 'POST', body: formData });
-        const data = await res.json();
-        if (res.ok && data.success && data.insurance_extracted) {
-          document.getElementById('prof-insurance').value = 'On file';
-          const docCountEl = document.getElementById('prof-docs');
-          if (docCountEl) docCountEl.value = data.doc_count;
-        } else if (res.ok && data.success) {
-          // OCR/upload succeeded but we couldn't confidently pull
-          // provider/ID off the card -- don't claim it's on file.
-          document.getElementById('prof-insurance').value = "Uploaded — couldn't auto-read details, please confirm in chat";
-        } else {
-          document.getElementById('prof-insurance').value = 'Upload failed — please resend in chat';
+    // Upload both insurance card photos now that we have a thread to
+    // attach them to — reuses the same OCR/document pipeline as the
+    // in-chat document upload, once per side.
+    if (selectedInsuranceFile || selectedInsuranceFileBack) {
+      const uploadSide = async (file, sideLabel) => {
+        if (!file) return { ok: false };
+        const formData = new FormData();
+        formData.append('thread_id', threadId);
+        formData.append('file', file);
+        formData.append('patient_email', email);
+        formData.append('document_side', sideLabel);
+        try {
+          const res = await fetch(`${API_BASE_URL}/api/documents/upload`, { method: 'POST', body: formData });
+          const data = await res.json();
+          return { ok: res.ok && data.success, extracted: data.insurance_extracted, doc_count: data.doc_count };
+        } catch (err) {
+          console.error(`Insurance photo (${sideLabel}) upload failed:`, err);
+          return { ok: false };
         }
-      } catch (err) {
-        console.error('Insurance photo upload failed:', err);
+      };
+
+      const [frontResult, backResult] = await Promise.all([
+        uploadSide(selectedInsuranceFile, 'front'),
+        uploadSide(selectedInsuranceFileBack, 'back'),
+      ]);
+
+      const docCountEl = document.getElementById('prof-docs');
+      if (frontResult.ok && backResult.ok) {
+        if (frontResult.extracted || backResult.extracted) {
+          document.getElementById('prof-insurance').value = 'On file (front & back)';
+        } else {
+          document.getElementById('prof-insurance').value = "Uploaded — couldn't auto-read details, please confirm in chat";
+        }
+        if (docCountEl) docCountEl.value = backResult.doc_count ?? frontResult.doc_count ?? docCountEl.value;
+      } else if (frontResult.ok || backResult.ok) {
+        document.getElementById('prof-insurance').value = 'Only one side uploaded — please resend the other in chat';
+        if (docCountEl) docCountEl.value = backResult.doc_count ?? frontResult.doc_count ?? docCountEl.value;
+      } else {
         document.getElementById('prof-insurance').value = 'Upload failed — please resend in chat';
       }
     }
@@ -2023,6 +2140,59 @@ function addUserMessage(text) {
   chatLog.scrollTop = chatLog.scrollHeight;
 }
 
+/* Turns a plain/markdown-ish reply from the backend (e.g. an answer
+   pulled from an uploaded prescription or other document) into
+   organized HTML — headings-style bold lines, bullet/numbered lists,
+   and proper paragraph breaks — instead of one dense run-on block.
+   Safe to call on any bot text: if the string already contains HTML
+   tags (existing behavior elsewhere in the app), it's left untouched
+   so nothing double-renders. */
+function formatBotText(raw) {
+  if (raw == null) return '';
+  const text = String(raw);
+
+  // Already-HTML content (e.g. hand-built strings from elsewhere in
+  // this file) — pass through unchanged.
+  if (/<\/?(div|p|ul|ol|li|br|strong|b|span|table)[\s>]/i.test(text)) {
+    return text;
+  }
+
+  const lines = text.replace(/\r\n/g, '\n').split('\n');
+  let html = '';
+  let listOpen = null; // 'ul' | 'ol' | null
+  const closeList = () => {
+    if (listOpen) { html += `</${listOpen}>`; listOpen = null; }
+  };
+  const inline = (s) => escapeHtml(s)
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/(?<!\*)\*(?!\*)([^*]+)\*(?!\*)/g, '<em>$1</em>');
+
+  lines.forEach((line) => {
+    const trimmed = line.trim();
+    if (!trimmed) { closeList(); return; }
+
+    const bulletMatch = trimmed.match(/^[-*•]\s+(.*)$/);
+    const numberedMatch = trimmed.match(/^\d+[.)]\s+(.*)$/);
+    const headingMatch = trimmed.match(/^#{1,3}\s+(.*)$/);
+
+    if (bulletMatch) {
+      if (listOpen !== 'ul') { closeList(); html += '<ul class="bubble-list">'; listOpen = 'ul'; }
+      html += `<li>${inline(bulletMatch[1])}</li>`;
+    } else if (numberedMatch) {
+      if (listOpen !== 'ol') { closeList(); html += '<ol class="bubble-list">'; listOpen = 'ol'; }
+      html += `<li>${inline(numberedMatch[1])}</li>`;
+    } else if (headingMatch) {
+      closeList();
+      html += `<div class="bubble-heading">${inline(headingMatch[1])}</div>`;
+    } else {
+      closeList();
+      html += `<p class="bubble-para">${inline(trimmed)}</p>`;
+    }
+  });
+  closeList();
+  return html;
+}
+
 function addBotMessage(text, extraHtml = '') {
   const div = document.createElement('div');
   div.className = 'bubble-row from-bot';
@@ -2030,7 +2200,7 @@ function addBotMessage(text, extraHtml = '') {
     <div class="avatar avatar-bot"><img src="${COVE_LOGO_DATA_URL}" alt="Cove"></div>
     <div class="bubble-col">
       <div class="bubble">
-        <div class="bubble-text">${text}</div>
+        <div class="bubble-text">${formatBotText(text)}</div>
         ${extraHtml ? `<div class="bubble-extra">${extraHtml}</div>` : ''}
       </div>
       <div class="bubble-meta">
@@ -2603,7 +2773,43 @@ q ${TEAL_DEEP} rg 0 0 612 70 re f Q
 BT /F1 12 Tf ${WHITE} rg 50 40 Td (Thank you for choosing Cove Healthcare.) Tj ET
 BT /F2 9 Tf ${TEAL_TINT} rg 50 22 Td (cove \\267 AI Hospital Front Desk) Tj ET`;
 
+  // ----------------------------------------------------------------
+  // PAGE 2 — Appointment rules & policies. A second page keeps the
+  // confirmation page above uncluttered while still giving the
+  // patient something concrete to reference before they show up.
+  // ----------------------------------------------------------------
+  const appointmentRules = [
+    'Please arrive 15 minutes before your scheduled appointment time.',
+    'Bring a valid photo ID and your insurance card (front and back) to every visit.',
+    'Cancellations or reschedules require at least 24 hours notice.',
+    'Arrivals more than 15 minutes late may need to be rescheduled.',
+    'Wear a mask if you have cold, flu, or other contagious symptoms.',
+    'Bring a current list of medications and any relevant referral paperwork.',
+    'Contact the front desk as soon as possible for emergencies or same-day changes.',
+  ];
+
+  const rulesTop = 660, rulesGap = 46;
+  let rulesStream = '';
+  appointmentRules.forEach((rule, i) => {
+    const y = rulesTop - i * rulesGap;
+    rulesStream += `q\n${SEAGLASS} rg\n50 ${y - 8} 8 8 re\nf\nQ\n`;
+    rulesStream += `BT\n/F1 11 Tf\n${INK} rg\n70 ${y - 10} Td\n(${pdfEscape(rule)}) Tj\nET\n`;
+  });
+
+  const rulesContentStream = `q 0.957 0.973 0.969 rg 0 0 612 792 re f Q
+q ${TEAL} rg 0 700 612 92 re f Q
+BT /F1 20 Tf ${WHITE} rg 50 745 Td (Appointment Rules & Policies) Tj ET
+BT /F2 10 Tf ${TEAL_TINT} rg 50 718 Td (Please review before your visit) Tj ET
+${rulesStream}q ${CORAL_TINT} rg 50 260 512 56 re f Q
+q ${CORAL} rg 50 260 5 56 re f Q
+BT /F2 9 Tf ${INK_SOFT} rg 74 292 Td (MEDICAL EMERGENCY?) Tj ET
+BT /F1 13 Tf ${CORAL_DEEP} rg 74 270 Td (Call 911 or your local emergency number immediately.) Tj ET
+q ${TEAL_DEEP} rg 0 0 612 50 re f Q
+BT /F1 12 Tf ${WHITE} rg 50 28 Td (Questions? Call the front desk: ${pdfEscape(FRONT_DESK_PHONE)}) Tj ET
+BT /F2 9 Tf ${TEAL_TINT} rg 50 10 Td (cove \\267 AI Hospital Front Desk) Tj ET`;
+
   const streamBytes = new TextEncoder().encode(contentStream).length;
+  const rulesStreamBytes = new TextEncoder().encode(rulesContentStream).length;
 
   // Build each object as its own string so we can record byte-accurate
   // offsets for a proper xref table below — lets the PDF validate
@@ -2612,26 +2818,28 @@ BT /F2 9 Tf ${TEAL_TINT} rg 50 22 Td (cove \\267 AI Hospital Front Desk) Tj ET`;
   const objBodies = [
     null, // objects are 1-indexed
     `1 0 obj\n<</Type /Catalog /Pages 2 0 R>>\nendobj\n`,
-    `2 0 obj\n<</Type /Pages /Kids [3 0 R] /Count 1>>\nendobj\n`,
+    `2 0 obj\n<</Type /Pages /Kids [3 0 R 7 0 R] /Count 2>>\nendobj\n`,
     `3 0 obj\n<</Type /Page /Parent 2 0 R /Resources << /Font << /F1 4 0 R /F2 6 0 R >> >> /MediaBox [0 0 612 792] /Contents 5 0 R>>\nendobj\n`,
     `4 0 obj\n<</Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold>>\nendobj\n`,
     `5 0 obj\n<</Length ${streamBytes}>>\nstream\n${contentStream}\nendstream\nendobj\n`,
-    `6 0 obj\n<</Type /Font /Subtype /Type1 /BaseFont /Helvetica>>\nendobj\n`
+    `6 0 obj\n<</Type /Font /Subtype /Type1 /BaseFont /Helvetica>>\nendobj\n`,
+    `7 0 obj\n<</Type /Page /Parent 2 0 R /Resources << /Font << /F1 4 0 R /F2 6 0 R >> >> /MediaBox [0 0 612 792] /Contents 8 0 R>>\nendobj\n`,
+    `8 0 obj\n<</Length ${rulesStreamBytes}>>\nstream\n${rulesContentStream}\nendstream\nendobj\n`
   ];
 
   let pdfString = '%PDF-1.4\n';
   const offsets = [0];
-  for (let i = 1; i <= 6; i++) {
+  for (let i = 1; i <= 8; i++) {
     offsets[i] = new TextEncoder().encode(pdfString).length;
     pdfString += objBodies[i];
   }
   const xrefStart = new TextEncoder().encode(pdfString).length;
-  let xref = `xref\n0 7\n0000000000 65535 f \n`;
-  for (let i = 1; i <= 6; i++) {
+  let xref = `xref\n0 9\n0000000000 65535 f \n`;
+  for (let i = 1; i <= 8; i++) {
     xref += String(offsets[i]).padStart(10, '0') + ' 00000 n \n';
   }
   pdfString += xref;
-  pdfString += `trailer\n<</Size 7 /Root 1 0 R>>\nstartxref\n${xrefStart}\n%%EOF`;
+  pdfString += `trailer\n<</Size 9 /Root 1 0 R>>\nstartxref\n${xrefStart}\n%%EOF`;
 
   const blob = new Blob([pdfString], { type: 'application/pdf' });
   const url = URL.createObjectURL(blob);
